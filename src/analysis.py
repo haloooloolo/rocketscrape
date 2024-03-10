@@ -66,10 +66,10 @@ class TopContributorAnalysis(MessageAnalysis):
             self.total_time[author] = self.total_time.get(author, 0) + session_time
             del self.open_sessions[author]
     
-    def _finalize(self) -> list[tuple[str, int]]:
+    def _finalize(self) -> dict[str, int]:
         # add remaining open sessions to total
         for author, (session_start, session_end) in self.open_sessions.items():
             session_time = self.__to_minutes(session_end - session_start) + self.base_session_time
             self.total_time[author] = self.total_time.get(author, 0) + session_time
 
-        return sorted(self.total_time.items(), key=lambda a: a[1], reverse=True)
+        return self.total_time

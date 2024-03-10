@@ -1,4 +1,5 @@
 import os
+import heapq
 import argparse
 from enum import Enum
 from datetime import datetime, timezone
@@ -31,6 +32,7 @@ async def main(args):
 
     analysis = TopContributorAnalysis(args.log_interval)
     contributors = await analysis.run(channel, start, end)
+    top_contributors = heapq.nlargest(args.max_results, contributors.items(), key=lambda a: a[1])
 
     if start and end:
         range_str = f'from {start} to {end}'
@@ -43,7 +45,7 @@ async def main(args):
 
     print()
     print(f'Top # {channel} contributors {range_str}')
-    for i, (author, time) in enumerate(list(contributors)[:args.max_results]):
+    for i, (author, time) in enumerate(top_contributors):
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
         print(f'{i+1}. {author}: {hours}h {minutes}m')
