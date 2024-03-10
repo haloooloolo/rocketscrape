@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 import discord
 from analysis import TopContributorAnalysis
 
-MAX_CONTRIBUTORS = 10
-
 
 class Channel(Enum):
     general = 704196071881965589
@@ -43,7 +41,7 @@ async def main(args):
 
     print()
     print(f'Top # {channel} contributors {range_str}')
-    for i, (author, time) in enumerate(list(contributors)[:MAX_CONTRIBUTORS]):
+    for i, (author, time) in enumerate(list(contributors)[:args.max_results]):
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
         print(f'{i+1}. {author}: {hours}h {minutes}m')
@@ -54,6 +52,7 @@ def parse_args():
     parser.add_argument('-c', '--channel', type=Channel.argtype, choices=Channel, default=Channel.support)
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
+    parser.add_argument('--max-results', type=int, default=10)
     return parser.parse_args()
 
 

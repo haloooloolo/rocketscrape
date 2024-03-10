@@ -22,6 +22,7 @@ class MessageCache:
     def __init__(self, channel: discord.TextChannel) -> None:
         self.channel = channel
         try:
+            # TODO linked list
             self.segments = self.__load()
         except (FileNotFoundError, EOFError):
             self.segments = []
