@@ -61,6 +61,9 @@ class MessageCache:
             return pickle.load(file)
 
     def __commit(self, start: Optional[datetime], end: Optional[datetime]) -> None:
+        if not end and not self.uncommitted_messages:
+            return
+
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         end = end or self.uncommitted_messages[-1].time
         low, high, successor = None, None, None

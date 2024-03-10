@@ -26,7 +26,7 @@ class Channel(Enum):
         return self.name
 
 
-async def plot_contributors(args):
+async def plot_contributor_history(args):
     channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
@@ -70,7 +70,7 @@ async def print_contributors(args):
 
 
 async def main(args):
-    await plot_contributors(args)
+    await plot_contributor_history(args)
 
 
 def parse_args():
@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
     parser.add_argument('-r', '--max-results', type=int, default=10)
-    parser.add_argument('-l', '--log-interval', type=float, default=1)
+    parser.add_argument('-l', '--log-interval', type=float, default=1.0)
     return parser.parse_args()
 
 
