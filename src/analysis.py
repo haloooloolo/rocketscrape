@@ -49,11 +49,11 @@ class TopContributorAnalysis(MessageAnalysis):
     def __to_minutes(td: timedelta):
         return td / timedelta(minutes=1)
     
-    def _prepare(self):
+    def _prepare(self) -> None:
         self.open_sessions = {}
         self.total_time = {}
 
-    def _on_message(self, message: Message):
+    def _on_message(self, message: Message) -> None:
         timestamp = message.time
         author = message.author
 
@@ -73,3 +73,37 @@ class TopContributorAnalysis(MessageAnalysis):
             self.total_time[author] = self.total_time.get(author, 0) + session_time
 
         return self.total_time
+
+
+class HistoricalTopContributorAnalysis(TopContributorAnalysis):
+    def _prepare(self) -> None:
+        super()._prepare()
+        self.x = []
+        self.y = {}
+        self.next_date = None
+        self.last_ts = None
+
+    def __add_datapoints(self, date) -> None:
+        for author, time_min in self.total_time.items():
+            if author not in self.y:
+                self.y[author] = [0] * len(self.x)
+            self.y[author].append(time_min)
+
+        self.x.append(date)
+
+    def _on_message(self, message: Message) -> None:
+        super()._on_message(message)
+        self.last_ts = message.time
+
+        if self.next_date is None:
+            self.next_date = message.time
+        elif message.time < self.next_date:
+            return
+
+        self.__add_datapoints(self.next_date)
+        self.next_date += timedelta(days=28)
+
+    def _finalize(self) -> tuple[list[datetime], dict[str, list[int]]]:
+        super()._finalize()
+        self.__add_datapoints(self.last_ts)
+        return self.x, self.y

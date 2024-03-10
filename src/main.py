@@ -5,7 +5,8 @@ from enum import Enum
 from datetime import datetime, timezone
 
 import discord
-from analysis import TopContributorAnalysis
+import matplotlib.pyplot as plt
+from analysis import TopContributorAnalysis, HistoricalTopContributorAnalysis
 
 
 class Channel(Enum):
@@ -19,13 +20,30 @@ class Channel(Enum):
             return cls[s]
         except KeyError:
             raise argparse.ArgumentTypeError(
-                f"{s!r} is not a valid {cls.__name__}")
+        f"{s!r} is not a valid {cls.__name__}")
 
     def __str__(self):
         return self.name
 
 
-async def main(args):
+async def plot_contributors(args):
+    channel = client.get_channel(args.channel.value)
+    start = args.start.replace(tzinfo=timezone.utc) if args.start else None
+    end = args.end.replace(tzinfo=timezone.utc) if args.end else None
+
+    analysis = HistoricalTopContributorAnalysis(args.log_interval)
+    x, y = await analysis.run(channel, start, end)
+
+    for author, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
+        plt.plot(x, data, label=author)
+
+    plt.ylabel('time (mins)')
+    plt.legend()
+    plt.title(f'Top #{args.channel.name} contributors over time')
+    plt.show()
+
+
+async def print_contributors(args):
     channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
@@ -49,6 +67,10 @@ async def main(args):
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
         print(f'{i+1}. {author}: {hours}h {minutes}m')
+
+
+async def main(args):
+    await plot_contributors(args)
 
 
 def parse_args():
