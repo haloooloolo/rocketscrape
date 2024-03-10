@@ -3,3 +3,5 @@ __pycache__
 *.pkl
 .DS_STORE
 .venv
+.idea
+*.egg*

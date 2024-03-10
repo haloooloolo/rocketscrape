@@ -2,6 +2,7 @@ import os
 import argparse
 import logging
 import inspect
+import pathlib
 
 from datetime import datetime, timezone
 from enum import IntEnum
@@ -12,6 +13,9 @@ import discord
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
 from analysis import MessageAnalysis, CustomArgument, CustomOption
+
+
+T = TypeVar('T')
 
 
 class _EnumArg(IntEnum):
@@ -41,21 +45,27 @@ class Channel(_EnumArg):
     support = 468923220607762485
 
 
-async def main() -> int:
+def main():
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
+
+
+async def _main(client) -> int:
+    args = client.args
     args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
     common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
         if not (guild := client.get_guild(args.server)):
-            logging.error(f'server {args.server} could not be found')
+            logging.error(f'Server {args.server} could not be found')
             return 1
         stream = await ServerMessageStream(guild, *common_stream_args)
     else:
         channels: list[discord.TextChannel | discord.Thread] = []
         for channel_id in args.channels:
             if not (channel := client.get_channel(channel_id)):
-                logging.error(f'channel {channel_id} could not be found')
+                logging.error(f'Channel {channel_id} could not be found')
                 return 1
             if isinstance(channel, (discord.TextChannel, discord.Thread)):
                 channels.append(channel)
@@ -71,8 +81,6 @@ async def main() -> int:
 
     return 0
 
-T = TypeVar('T')
-
 
 def get_subclasses(cls: type[T]) -> set[type[T]]:
     classes = [cls]
@@ -86,6 +94,8 @@ def get_subclasses(cls: type[T]) -> set[type[T]]:
 def parse_args():
     parser = argparse.ArgumentParser(prog='RocketScrape',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+
+    root_dir = pathlib.Path(__file__).parent.parent.resolve()
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
@@ -103,10 +113,10 @@ def parse_args():
                         help=f'maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
-    parser.add_argument('--cache-dir', type=str, default='cache',
+    parser.add_argument('--cache-dir', type=str, default=(root_dir/'cache'),
                         help='directory to store the message cache in')
-    parser.add_argument('--refresh-window', type=int, default=24,
-                        help='window width in hours in which message data will be refreshed despite being in cache')
+    parser.add_argument('--refresh-window', type=int, default=1,
+                        help='width of window (in hours) in which message data will be refreshed despite being cached')
     parser.add_argument('--commit-batch-size', type=int, default=2500,
                         help='maximum number of new messages that will be committed to disk at once')
 
@@ -132,7 +142,4 @@ def parse_args():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-    args = parse_args()
-    client = Client(main)
-    client.run(os.environ['DISCORD_USER_TOKEN'])
+    main()

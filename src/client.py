@@ -1,15 +1,20 @@
 import discord
 
-from typing import Callable, Awaitable
+import logging
+from typing import Any, Callable, Awaitable, Optional
+
+from discord.utils import MISSING
 
 
 class Client(discord.Client):
-    def __init__(self, main: Callable[[], Awaitable]):
+    def __init__(self, func: Callable[['Client'], Awaitable], args: Any):
         super().__init__()
-        self.__main = main
-    
+        self.__func = func
+        self.args = args
+
     async def on_ready(self) -> None:
-        await self.__main()
+        logging.info(f'Logged in as {self.user}')
+        await self.__func(self)
         await self.close()
 
     async def get_username(self, user_id: int) -> str:
