@@ -3,7 +3,9 @@ import copy
 import shutil
 import pickle
 import asyncio
+
 import discord
+import tqdm
 
 from abc import ABC, abstractmethod
 from typing import Optional, AsyncIterator, Sequence
@@ -21,19 +23,29 @@ class Message:
         self.author_id: int = message.author.id
         self.content: str = message.content
         self.reactions: dict[str, set[int]] = {}
+        self.__message = message
 
-    async def __load_metadata(self, message: discord.Message) -> None:
-        async def gather_reactors(_reaction):
+    async def __async_init(self) -> 'Message':
+        async def gather_reactions(_reaction):
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
-        for emoji, users in await asyncio.gather(*[gather_reactors(r) for r in message.reactions]):
+        reactions = [gather_reactions(r) for r in self.__message.reactions]
+        for emoji, users in await asyncio.gather(*reactions):
             self.reactions[emoji] = users
 
-    @staticmethod
-    async def fetch(message: discord.Message) -> 'Message':
-        m = Message(message)
-        await m.__load_metadata(message)
-        return m
+        return self
+
+    def __await__(self):
+        return self.__async_init().__await__()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['_Message__message']
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.__message = None
 
     def __eq__(self, other) -> bool:
         return self.id == other.id
@@ -153,7 +165,7 @@ class SingleChannelMessageStream:
 
             # fill gap between last retrieved message and start of this interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
-                message = await Message.fetch(m)
+                message = await Message(m)
                 if end and message.time > end:
                     self.__commit(start, end)
                     return
@@ -173,7 +185,7 @@ class SingleChannelMessageStream:
         try:
             # fill gap between last segment end of requested interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
-                message = await Message.fetch(m)
+                message = await Message(m)
                 process_message(message)
                 yield message
 
@@ -184,13 +196,14 @@ class SingleChannelMessageStream:
 
 class MultiChannelMessageStream(MessageStream):
     def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread]) -> None:
-        self.channels = [SingleChannelMessageStream(channel) for channel in channels]
+        self.streams = [SingleChannelMessageStream(channel) for channel in channels]
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
+        print('Fetching channel stream heads...')
         heads = {}
 
-        for channel in self.channels:
-            iterator = channel.get_history(start, end)
+        for stream in tqdm.tqdm(self.streams):
+            iterator = stream.get_history(start, end)
             if head := await anext(iterator, None):
                 heads[iterator] = head
 
@@ -206,7 +219,7 @@ class MultiChannelMessageStream(MessageStream):
                 del heads[candidate]
 
     def __repr__(self) -> str:
-        return f'({", ".join([str(c) for c in self.channels])})'
+        return f'({", ".join([str(c) for c in self.streams])})'
 
 
 class ServerMessageStream(MultiChannelMessageStream):
@@ -214,7 +227,22 @@ class ServerMessageStream(MultiChannelMessageStream):
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         threads = list(guild.threads)
         super().__init__(channels + threads)
-        self.guild = guild
+        self.__repr = str(guild)
+
+    async def __async_init(self) -> 'ServerMessageStream':
+        print('Fetching archived threads...')
+        for stream in self.streams:
+            if isinstance(stream.channel, discord.TextChannel):
+                try:
+                    archived_threads = stream.channel.archived_threads(limit=None)
+                    self.streams.extend([SingleChannelMessageStream(t) async for t in archived_threads])
+                except discord.errors.Forbidden:
+                    continue
+
+        return self
+
+    def __await__(self):
+        return self.__async_init().__await__()
 
     def __repr__(self) -> str:
-        return str(self.guild)
+        return self.__repr

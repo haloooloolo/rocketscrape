@@ -84,7 +84,7 @@ async def main():
     elif args.channels:
         stream = MultiChannelMessageStream(list(map(client.get_channel, args.channels)))
     else:
-        stream = ServerMessageStream(client.get_guild(Server.rocketpool))
+        stream = await ServerMessageStream(client.get_guild(Server.rocketpool))
 
     await print_contributors(stream)
 
