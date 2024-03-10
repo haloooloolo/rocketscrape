@@ -4,7 +4,7 @@ import logging
 import inspect
 
 from datetime import datetime, timezone, timedelta
-from enum import Enum, IntEnum
+from enum import IntEnum
 
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, Message
@@ -21,7 +21,7 @@ class _EnumArg(IntEnum):
                 return int(s)
             except ValueError:
                 raise argparse.ArgumentTypeError(
-                    f"{s!r} is not a valid {cls.__name__}")
+                    f"{s!r} is not a valid {cls.__name__.lower()}")
 
     def __str__(self):
         return self.name
