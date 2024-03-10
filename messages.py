@@ -25,6 +25,9 @@ class _Segment:
     end: datetime
     messages: list[Message]
 
+    def __repr__(self):
+        return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
+
 
 class MessageCache:
     def __init__(self, channel: discord.TextChannel) -> None:
@@ -43,30 +46,32 @@ class MessageCache:
     def __commit(self, start: Optional[datetime], end: Optional[datetime]):
         pre = []
         post = []
-        l, h = None, None
+        l, h, s = None, None, None
 
-        if not self.uncommitted_messages:
-            return
-
-        start = start or self.uncommitted_messages[0].time
+        start = start or datetime.fromtimestamp(0)
         end = end or self.uncommitted_messages[-1].time
-        new_segment = _Segment(start, end, self.uncommitted_messages)
+        s_front = self.uncommitted_messages[0].time if self.uncommitted_messages else end
+        s_back = self.uncommitted_messages[-1].time if self.uncommitted_messages else end
 
         for i, segment in enumerate(self.segments):
-            if segment.start <= new_segment.start <= segment.end:
-                pre.extend([m for m in segment.messages if m.time < new_segment.messages[0].time])
-                new_segment.start = segment.start
-                l, h = l or i, i
-            if segment.start <= new_segment.end <= segment.end:
-                post.extend(([m for m in segment.messages if m.time > new_segment.messages[-1].time]))
-                new_segment.end = segment.end
-                l, h = l or i, i
+            if end < segment.start:
+                s = i
+            if segment.start <= start <= segment.end:
+                pre.extend([m for m in segment.messages if m.time < s_front])
+                start = segment.start
+                l, h = i if l is None else l, i
+            if segment.start <= end <= segment.end:
+                post.extend(([m for m in segment.messages if m.time > s_back]))
+                end = segment.end
+                l, h = i if l is None else l, i
 
-        new_segment.messages = pre + new_segment.messages + post
-        if l and h:
+        new_segment = _Segment(start, end, pre + self.uncommitted_messages + post)
+        if (l is not None) and (h is not None):
             self.segments = self.segments[:l] + [new_segment] + self.segments[h+1:]
+        elif s is not None:
+            self.segments.insert(s, new_segment)
         else:
-            self.segments = [new_segment]
+            self.segments.append(new_segment)
 
         os.makedirs(CACHE_DIR, exist_ok=True)
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
@@ -76,14 +81,20 @@ class MessageCache:
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
         last_timestamp = start
+        uncached_messages = 0
 
-        def process_message(_message):
-            nonlocal last_timestamp
+        def process_message(_message, from_cache=False):
+            nonlocal last_timestamp, uncached_messages
             last_timestamp = _message.time
-
             self.uncommitted_messages.append(_message)
-            if len(self.uncommitted_messages) >= 100:
+
+            if not from_cache:
+                uncached_messages += 1
+
+            if uncached_messages >= 1000:
+                print(f'committing {uncached_messages} new messages to disk...')
                 self.__commit(start, self.uncommitted_messages[-1].time)
+                uncached_messages = 0
 
         for segment in self.segments:
             # segment ahead of requested interval, skip
@@ -106,7 +117,7 @@ class MessageCache:
                     return 
 
                 if (start is None) or (message.time >= start):
-                    process_message(message)
+                    process_message(message, from_cache=True)
                     yield message
 
         # fill gap between last segment end of requested interval
