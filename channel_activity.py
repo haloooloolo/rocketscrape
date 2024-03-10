@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 BASE_SESSION_TIME_MINS = 5
 SESSION_TIMEOUT_MINS = 15
-MAX_NUM_CONTRIBUTORS = 10
+MAX_CONTRIBUTORS = 10
 
 
 class Channel(Enum):
@@ -13,14 +13,23 @@ class Channel(Enum):
     TRADING = 405163713063288832
     SUPPORT = 468923220607762485
 
+class MessageCache:
+    def __init__(self, channel: discord.TextChannel) -> None:
+        self.channel = channel
+        self.data = []
+
+    async def get(self, start: datetime, end: datetime):
+        async for message in self.channel.history(limit=None, after=start, before=end, oldest_first=True):
+            yield message
+
 def to_minutes(td: timedelta):
     return td / timedelta(minutes=1)
 
-async def get_contributors(channel, start, end):
+async def get_contributors(channel: discord.TextChannel, start: datetime, end: datetime):
     open_sessions = {}
     total_time = {}
 
-    async for message in channel.history(limit=None, after=start, before=end, oldest_first=True):
+    async for message in MessageCache(channel).get(start, end):
         timestamp = message.created_at
         author = message.author
         print(timestamp)
@@ -40,12 +49,9 @@ async def get_contributors(channel, start, end):
 
     return sorted(total_time.items(), key=lambda a: a[1], reverse=True)
 
-client = discord.Client()
-
-@client.event
 async def on_ready():
     channel = client.get_channel(Channel.SUPPORT.value)
-    start, end = None, None # datetime.fromisoformat('2023-01-15'), None
+    start, end = datetime.fromisoformat('2023-01-15'), None
     contributors = await get_contributors(channel, start, end)
     
     if start and end:
@@ -58,10 +64,12 @@ async def on_ready():
         range_str = ''
 
     print(f'Top # {channel} contributors {range_str}')
-    for i, (author, time) in enumerate(list(contributors)[:MAX_NUM_CONTRIBUTORS]):
+    for i, (author, time) in enumerate(list(contributors)[:MAX_CONTRIBUTORS]):
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
         print(f'{i+1}. {author}: {hours}h {minutes}m')
 
-
-client.run(os.environ['DISCORD_USER_TOKEN'])
+if __name__ == '__main__':
+    client = discord.Client()
+    on_ready = client.event(on_ready)
+    client.run(os.environ['DISCORD_USER_TOKEN'])
