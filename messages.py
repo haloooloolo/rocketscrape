@@ -1,4 +1,5 @@
 import os
+import copy
 import pickle
 import discord
 
@@ -96,7 +97,7 @@ class MessageCache:
                 self.__commit(start, self.uncommitted_messages[-1].time)
                 uncached_messages = 0
 
-        for segment in self.segments:
+        for segment in copy.copy(self.segments):
             # segment ahead of requested interval, skip
             if start and start > segment.end:
                 continue
