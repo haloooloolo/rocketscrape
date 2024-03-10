@@ -1,2 +1,3 @@
 .fleet
-cache/*
+__pycache__
+*.pkl
