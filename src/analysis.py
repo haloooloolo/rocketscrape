@@ -232,7 +232,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
     def _finalize(self) -> dict[int, int]:
         total_time = super()._finalize()
-        for author_id, ts in self.last_seen:
+        for author_id, ts in self.last_seen.items():
             if (self.last_ts - ts) < self.inactivity_threshold:
                 del total_time[author_id]
 
@@ -242,7 +242,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
 
         print()
-        print(f'Top {stream} contributors without recent activity ')
+        print(f'Top {stream} contributors with no recent activity ')
         for i, (author_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60

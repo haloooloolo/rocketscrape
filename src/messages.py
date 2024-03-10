@@ -10,7 +10,7 @@ import tqdm
 
 from abc import ABC, abstractmethod
 from typing import Optional, AsyncIterator, Sequence, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
 
@@ -28,6 +28,9 @@ class Message:
         async def gather_reactions(_reaction):
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
+        if self.reactions:
+            self.reactions.clear()
+
         reactions = [gather_reactions(r) for r in self.__message.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
             if isinstance(res, Exception):
@@ -37,6 +40,17 @@ class Message:
                 self.reactions[emoji] = users
 
         return self
+
+    async def refresh(self, channel: discord.TextChannel | discord.Thread) -> None:
+        try:
+            self.__message = await channel.get_partial_message(self.id).fetch()
+        except discord.NotFound:
+            logging.warning(f'Failed to refresh message {self.id}, can no longer be found.')
+            return
+
+        self.content: str = self.__message.content
+        self.reactions.clear()
+        await self.__async_init()
 
     def __await__(self):
         return self.__async_init().__await__()
@@ -82,6 +96,10 @@ class _CacheSegment:
                 self.messages.append(self_messages.pop())
             else:
                 self.messages.append(other_messages.pop())
+
+            if other_messages and self.messages[-1] == other_messages[-1]:
+                # avoid duplicates
+                other_messages.pop()
 
     def __repr__(self) -> str:
         return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
@@ -145,14 +163,17 @@ class SingleChannelMessageStream(MessageStream):
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
 
-        def process_message(_message: Message, from_cache=False) -> None:
+        async def process_message(_message: Message, from_cache=False) -> None:
             nonlocal last_timestamp
             last_timestamp = _message.time
+            now = datetime.now().replace(tzinfo=timezone.utc)
 
-            if from_cache:
-                return
+            if not from_cache:
+                self.uncommitted_messages.append(_message)
+            elif (now - _message.time) < timedelta(days=1):
+                await message.refresh(self.channel)
+                self.uncommitted_messages.append(_message)
 
-            self.uncommitted_messages.append(_message)
             if len(self.uncommitted_messages) >= 2500:
                 self.__commit(start, self.uncommitted_messages[-1].time)
 
@@ -164,7 +185,7 @@ class SingleChannelMessageStream(MessageStream):
             # fill gap between last retrieved message and start of this interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
                 message = await Message(m)
-                process_message(message)
+                await process_message(message)
 
                 if end and message.time > end:
                     self.__commit(start, end)
@@ -178,14 +199,14 @@ class SingleChannelMessageStream(MessageStream):
                     return 
 
                 if (start is None) or (message.time >= start):
-                    process_message(message, from_cache=True)
+                    await process_message(message, from_cache=True)
                     yield message
 
         try:
             # fill gap between last segment end of requested interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
                 message = await Message(m)
-                process_message(message)
+                await process_message(message)
                 yield message
 
             self.__commit(start, end)
