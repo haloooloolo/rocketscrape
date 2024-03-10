@@ -1,55 +1,63 @@
 import os
 import heapq
 import argparse
-from enum import Enum
+from enum import IntEnum
 from datetime import datetime, timezone
 
 import discord
 import matplotlib.pyplot as plt
+
+from messages import MessageSingleChannel, MessageMultiChannel
 from analysis import TopContributorAnalysis, HistoricalTopContributorAnalysis
 
 
-class Channel(Enum):
+class Channel(IntEnum):
     general = 704196071881965589
     trading = 405163713063288832
     support = 468923220607762485
 
     @classmethod
-    def argtype(cls, s: str) -> Enum:
+    def argtype(cls, s: str) -> IntEnum:
         try:
             return cls[s]
         except KeyError:
             raise argparse.ArgumentTypeError(
-        f"{s!r} is not a valid {cls.__name__}")
+                f"{s!r} is not a valid {cls.__name__}")
 
     def __str__(self):
         return self.name
 
 
 async def plot_contributor_history(args):
-    channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
+    channel = client.get_channel(args.channel.value)
+    cache = MessageSingleChannel(channel)
+
     analysis = HistoricalTopContributorAnalysis(args.log_interval)
-    x, y = await analysis.run(channel, start, end)
+    x, y = await analysis.run(cache, start, end)
 
     for author, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
         plt.plot(x, data, label=author)
 
     plt.ylabel('time (mins)')
     plt.legend()
-    plt.title(f'Top #{args.channel.name} contributors over time')
+    plt.title(f'Top {cache} contributors over time')
     plt.show()
 
 
 async def print_contributors(args):
-    channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
+    cache = MessageMultiChannel([
+        client.get_channel(Channel.trading),
+        client.get_channel(Channel.support)
+    ])
+
     analysis = TopContributorAnalysis(args.log_interval)
-    contributors = await analysis.run(channel, start, end)
+    contributors = await analysis.run(cache, start, end)
     top_contributors = heapq.nlargest(args.max_results, contributors.items(), key=lambda a: a[1])
 
     if start and end:
@@ -62,7 +70,7 @@ async def print_contributors(args):
         range_str = '(all time)'
 
     print()
-    print(f'Top # {channel} contributors {range_str}')
+    print(f'Top {cache} contributors {range_str}')
     for i, (author, time) in enumerate(top_contributors):
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
@@ -70,7 +78,7 @@ async def print_contributors(args):
 
 
 async def main(args):
-    await plot_contributor_history(args)
+    await print_contributors(args)
 
 
 def parse_args():

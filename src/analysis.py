@@ -3,20 +3,19 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from datetime import datetime, timedelta
 
-import discord
-from messages import MessageCache, Message
+from messages import MessageChannel, Message
 
 
 class MessageAnalysis(ABC):
     def __init__(self, log_interval=1):
         self.log_interval = log_interval
 
-    async def run(self, channel: discord.TextChannel, start: Optional[datetime], end: Optional[datetime]):
+    async def run(self, channel: MessageChannel, start: Optional[datetime], end: Optional[datetime]):
         assert (start is None) or (end is None) or (end > start)
         last_ts = time.time()
         self._prepare()
 
-        async for message in MessageCache(channel).get_history(start, end):
+        async for message in channel.get_history(start, end):
             ts = time.time()
             if (ts - last_ts) >= self.log_interval:
                 print(message.time)

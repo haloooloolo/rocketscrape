@@ -4,6 +4,7 @@ import shutil
 import pickle
 import discord
 
+from abc import ABC, abstractmethod
 from typing import Optional
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -46,7 +47,13 @@ class _Segment:
                 self.messages.append(other_messages.pop())
 
 
-class MessageCache:
+class MessageChannel(ABC):
+    @abstractmethod
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
+        pass
+
+
+class MessageSingleChannel:
     def __init__(self, channel: discord.TextChannel) -> None:
         self.channel = channel
         self.uncommitted_messages = []
@@ -54,6 +61,9 @@ class MessageCache:
             self.segments = self.__load()
         except (FileNotFoundError, EOFError):
             self.segments = []
+
+    def __repr__(self) -> str:
+        return '#' + str(self.channel).encode('ascii', 'ignore').decode()
 
     def __load(self) -> list[_Segment]:
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
@@ -145,3 +155,30 @@ class MessageCache:
             yield message
 
         self.__commit(start, end)
+
+
+class MessageMultiChannel(MessageChannel):
+    def __init__(self, channels: list[discord.TextChannel]) -> None:
+        self.channels = [MessageSingleChannel(channel) for channel in channels]
+
+    def __repr__(self) -> str:
+        return f'({", ".join([str(c) for c in self.channels])})'
+
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
+        heads = {}
+
+        for channel in self.channels:
+            iterator = channel.get_history(start, end)
+            if head := await anext(iterator, None):
+                heads[iterator] = head
+
+        while heads:
+            candidate = None
+            for iterator, head in heads.items():
+                if (not candidate) or (head.time < heads[candidate].time):
+                    candidate = iterator
+
+            yield heads[candidate]
+            heads[candidate] = await anext(candidate, None)
+            if not heads[candidate]:
+                del heads[candidate]
