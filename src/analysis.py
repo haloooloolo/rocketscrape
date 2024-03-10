@@ -1,9 +1,13 @@
 import time
 import logging
-from abc import ABC, abstractmethod, abstractproperty
+import heapq
+
+from abc import ABC, abstractmethod
 from typing import Optional, Any
 from datetime import datetime, timedelta
+import matplotlib.pyplot as plt
 
+from client import Client
 from messages import MessageStream, Message
 
 
@@ -19,7 +23,7 @@ class MessageAnalysis(ABC):
         async for message in stream.get_history(start, end):
             ts = time.time()
             if (ts - last_ts) >= self.log_interval:
-                logging.info(f'Message stream reached timestamp {message.time}.')
+                logging.info(f'Message stream reached {message.time}.')
                 last_ts = ts
 
             self._on_message(message)
@@ -38,9 +42,26 @@ class MessageAnalysis(ABC):
     def _finalize(self) -> Any:
         pass
 
-    @classmethod
+    @staticmethod
+    def _get_date_range_str(start: Optional[datetime], end: [datetime]) -> str:
+        if start and end:
+            range_str = f'from {start} to {end}'
+        elif start:
+            range_str = f'since {start}'
+        elif end:
+            range_str = f'until {end}'
+        else:
+            range_str = '(all time)'
+
+        return range_str
+
     @abstractmethod
-    def subcommand(cls) -> str:
+    async def present(self, result: Any, client: Client, stream: MessageStream, args) -> None:
+        pass
+
+    @staticmethod
+    @abstractmethod
+    def subcommand() -> str:
         pass
 
 
@@ -79,8 +100,19 @@ class TopContributorAnalysis(MessageAnalysis):
 
         return self.total_time
 
-    @classmethod
-    def subcommand(cls) -> str:
+    async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
+        range_str = self._get_date_range_str(args.start, args.end)
+        top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+
+        print()
+        print(f'Top {stream} contributors {range_str}')
+        for i, (author_id, time) in enumerate(top_contributors):
+            time_mins = round(time)
+            hours, minutes = time_mins // 60, time_mins % 60
+            print(f'{i+1}. {await client.get_username(author_id)}: {hours}h {minutes}m')
+
+    @staticmethod
+    def subcommand() -> str:
         return 'contributors'
 
 
@@ -112,14 +144,24 @@ class ContributionHistoryAnalysis(TopContributorAnalysis):
         self.__add_snapshot(self.next_date)
         self.next_date += timedelta(days=28)
 
-    def _finalize(self) -> tuple[list[datetime], dict[str, list[int]]]:
+    def _finalize(self) -> tuple[list[datetime], dict[int, list[int]]]:
         super()._finalize()
         self.__add_snapshot(self.last_ts)
         return self.x, self.y
 
-    @classmethod
-    def subcommand(cls) -> str:
-        return 'contributor_history'
+    async def present(self, result: tuple[list[datetime], dict[int, list[int]]], client: Client, stream: MessageStream, args) -> None:
+        x, y = result
+        for author_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
+            plt.plot(x, data, label=await client.get_username(author_id))
+
+        plt.ylabel('time (mins)')
+        plt.legend()
+        plt.title(f'Top {stream} contributors over time'.encode('ascii', 'ignore').decode('ascii'))
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'contributor-history'
 
 
 class MessageCountAnalysis(MessageAnalysis):
@@ -132,9 +174,18 @@ class MessageCountAnalysis(MessageAnalysis):
     def _finalize(self) -> dict[int, int]:
         return self.count
 
+    async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
+        range_str = self._get_date_range_str(args.start, args.end)
+        top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+
+        print()
+        print(f'Top {stream} contributors {range_str}')
+        for i, (author_id, count) in enumerate(top_contributors):
+            print(f'{i+1}. {await client.get_username(author_id)}: {count}')
+
     @classmethod
     def subcommand(cls) -> str:
-        return 'message_count'
+        return 'message-count'
 
 
 class SelfKekAnalysis(MessageAnalysis):
@@ -149,9 +200,18 @@ class SelfKekAnalysis(MessageAnalysis):
     def _finalize(self) -> dict[int, int]:
         return self.count
 
-    @classmethod
-    def subcommand(cls) -> str:
-        return 'self_keks'
+    async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
+        range_str = self._get_date_range_str(args.start, args.end)
+        top_offenders = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+
+        print()
+        print(f'Top {stream} self-kek offenders {range_str} ')
+        for i, (author_id, count) in enumerate(top_offenders):
+            print(f'{i+1}. {await client.get_username(author_id)}: {count}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'self-kek'
 
 
 class MissingPersonAnalysis(TopContributorAnalysis):
@@ -173,11 +233,21 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     def _finalize(self) -> dict[int, int]:
         total_time = super()._finalize()
         for author_id, ts in self.last_seen:
-            if (self.last_ts - ts) >= self.inactivity_threshold:
+            if (self.last_ts - ts) < self.inactivity_threshold:
                 del total_time[author_id]
 
         return total_time
 
-    @classmethod
-    def subcommand(cls) -> str:
-        return 'missing_persons'
+    async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
+        top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+
+        print()
+        print(f'Top {stream} contributors without recent activity ')
+        for i, (author_id, time) in enumerate(top_contributors):
+            time_mins = round(time)
+            hours, minutes = time_mins // 60, time_mins % 60
+            print(f'{i+1}. {await client.get_username(author_id)}: {hours}h {minutes}m')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'missing-persons'

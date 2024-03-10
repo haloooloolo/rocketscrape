@@ -5,9 +5,10 @@ from typing import Callable, Awaitable
 
 class Client(discord.Client):
     def __init__(self, main: Callable[[], Awaitable]):
+        super().__init__()
         self.__main = main
     
-    async def on_ready(self):
+    async def on_ready(self) -> None:
         await self.__main()
         await self.close()
 

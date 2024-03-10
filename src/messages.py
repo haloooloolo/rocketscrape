@@ -112,7 +112,7 @@ class SingleChannelMessageStream(MessageStream):
         if not end and not self.uncommitted_messages:
             return
 
-        logging.info(f'saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
+        logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
 
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         end = end or self.uncommitted_messages[-1].time
