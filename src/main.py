@@ -1,16 +1,17 @@
 import heapq
 import argparse
-from enum import IntEnum
 
+import discord.errors
 import matplotlib.pyplot as plt
+from enum import Enum, IntEnum
 
 from messages import *
-from analysis import TopContributorAnalysis, HistoricalTopContributorAnalysis
+from analysis import *
 
 
-class _EnumArg(IntEnum):
+class _EnumArg(Enum):
     @classmethod
-    def argtype(cls, s: str) -> IntEnum:
+    def argtype(cls, s: str) -> Enum:
         try:
             return cls[s]
         except KeyError:
@@ -21,26 +22,30 @@ class _EnumArg(IntEnum):
         return self.name
 
 
-class Server(_EnumArg):
+class Server(_EnumArg, IntEnum):
     rocketpool = 405159462932971535
 
 
-class Channel(_EnumArg):
+class Channel(_EnumArg, IntEnum):
     general = 704196071881965589
     trading = 405163713063288832
     support = 468923220607762485
 
 
-async def plot_contributor_history(args):
-    start = args.start.replace(tzinfo=timezone.utc) if args.start else None
-    end = args.end.replace(tzinfo=timezone.utc) if args.end else None
+async def get_username(user_id: int):
+    try:
+        user = client.get_user(user_id) or await client.fetch_user(user_id)
+        return user.display_name
+    except discord.errors.NotFound:
+        return "Deleted User"
 
-    stream = ServerMessageStream(client.get_guild(Server.rocketpool))
+
+async def plot_contributor_history(args, stream: MessageStream) -> None:
     analysis = HistoricalTopContributorAnalysis(args.log_interval)
-    x, y = await analysis.run(stream, start, end)
+    x, y = await analysis.run(stream, args.start, args.end)
 
-    for author, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
-        plt.plot(x, data, label=author)
+    for author_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
+        plt.plot(x, data, label=await get_username(author_id))
 
     plt.ylabel('time (mins)')
     plt.legend()
@@ -48,9 +53,31 @@ async def plot_contributor_history(args):
     plt.show()
 
 
-async def print_contributors(args):
-    start = args.start.replace(tzinfo=timezone.utc) if args.start else None
-    end = args.end.replace(tzinfo=timezone.utc) if args.end else None
+async def print_contributors(args, stream: MessageStream) -> None:
+    analysis = TopContributorAnalysis(args.log_interval)
+    contributors = await analysis.run(stream, args.start, args.end)
+    top_contributors = heapq.nlargest(args.max_results, contributors.items(), key=lambda a: a[1])
+
+    if args.start and args.end:
+        range_str = f'from {args.start} to {args.end}'
+    elif args.start:
+        range_str = f'since {args.start}'
+    elif args.end:
+        range_str = f'until {args.end}'
+    else:
+        range_str = '(all time)'
+
+    print()
+    print(f'Top {stream} contributors {range_str}')
+    for i, (author_id, time) in enumerate(top_contributors):
+        time_mins = round(time)
+        hours, minutes = time_mins // 60, time_mins % 60
+        print(f'{i+1}. {await get_username(author_id)}: {hours}h {minutes}m')
+
+
+async def main(args):
+    args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
+    args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
     if args.channel:
         stream = SingleChannelMessageStream(client.get_channel(args.channel))
@@ -59,29 +86,7 @@ async def print_contributors(args):
     else:
         stream = ServerMessageStream(client.get_guild(Server.rocketpool))
 
-    analysis = TopContributorAnalysis(args.log_interval)
-    contributors = await analysis.run(stream, start, end)
-    top_contributors = heapq.nlargest(args.max_results, contributors.items(), key=lambda a: a[1])
-
-    if start and end:
-        range_str = f'from {start} to {end}'
-    elif start:
-        range_str = f'since {start}'
-    elif end:
-        range_str = f'up to {end}'
-    else:
-        range_str = '(all time)'
-
-    print()
-    print(f'Top {stream} contributors {range_str}')
-    for i, (author, time) in enumerate(top_contributors):
-        time_mins = round(time)
-        hours, minutes = time_mins // 60, time_mins % 60
-        print(f'{i+1}. {author}: {hours}h {minutes}m')
-
-
-async def main(args):
-    await print_contributors(args)
+    await print_contributors(args, stream)
 
 
 def parse_args():

@@ -15,21 +15,41 @@ CACHE_DIR = 'cache'
 @dataclass
 class Message:
     def __init__(self, message: discord.Message) -> None:
+        self.id: int = message.id
         self.time: datetime = message.created_at
-        self.author: str = message.author.name
+        self.author: int = message.author.id
         self.content: str = message.content
+        self.reactions: dict[str, list[int]] = {}
+
+    async def __load_metadata(self, message: discord.Message) -> None:
+        for reaction in message.reactions:
+            emoji = str(reaction.emoji)
+            users = [member.id async for member in reaction.users()]
+            self.reactions[emoji] = users
+
+    def __eq__(self, other) -> bool:
+        return self.id == other.id
+
+    @staticmethod
+    async def fetch(message: discord.Message) -> 'Message':
+        m = Message(message)
+        await m.__load_metadata(message)
+        return m
 
     def __repr__(self) -> str:
         return f'Message{{{self.author} @ {self.time}: "{self.content}"}}'
 
+    def __hash__(self):
+        return self.id
+
 
 @dataclass
-class _Segment:
+class _CacheSegment:
     start: datetime
     end: datetime
     messages: list[Message]
 
-    def merge(self, others: list['_Segment']) -> None:
+    def merge(self, others: list['_CacheSegment']) -> None:
         self.start = min(self.start, others[0].start)
         self.end = max(self.end, others[-1].end)
 
@@ -63,9 +83,9 @@ class SingleChannelMessageStream:
             self.segments = []
 
     def __repr__(self) -> str:
-        return '#' + str(self.channel).encode('ascii', 'ignore').decode()
+        return '# ' + str(self.channel)
 
-    def __load(self) -> list[_Segment]:
+    def __load(self) -> list[_CacheSegment]:
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
         with open(path, 'rb') as file:
             return pickle.load(file)
@@ -85,7 +105,7 @@ class SingleChannelMessageStream:
                 low = segment_nr if (low is None) else segment_nr
                 high = segment_nr
 
-        new_segment = _Segment(start, end, copy.copy(self.uncommitted_messages))
+        new_segment = _CacheSegment(start, end, copy.copy(self.uncommitted_messages))
         self.uncommitted_messages.clear()
 
         if (low is not None) and (high is not None):
@@ -131,7 +151,7 @@ class SingleChannelMessageStream:
 
             # fill gap between last retrieved message and start of this interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
-                message = Message(m)
+                message = await Message.fetch(m)
                 if end and message.time > end:
                     self.__commit(start, end)
                     return
@@ -151,7 +171,7 @@ class SingleChannelMessageStream:
         try:
             # fill gap between last segment end of requested interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
-                message = Message(m)
+                message = await Message.fetch(m)
                 process_message(message)
                 yield message
 

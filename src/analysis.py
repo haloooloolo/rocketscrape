@@ -82,7 +82,7 @@ class HistoricalTopContributorAnalysis(TopContributorAnalysis):
         self.next_date = None
         self.last_ts = None
 
-    def __add_datapoints(self, date: datetime) -> None:
+    def __add_snapshot(self, date: datetime) -> None:
         for author, time_min in self.total_time.items():
             if author not in self.y:
                 self.y[author] = [0] * len(self.x)
@@ -99,10 +99,10 @@ class HistoricalTopContributorAnalysis(TopContributorAnalysis):
         elif message.time < self.next_date:
             return
 
-        self.__add_datapoints(self.next_date)
+        self.__add_snapshot(self.next_date)
         self.next_date += timedelta(days=28)
 
     def _finalize(self) -> tuple[list[datetime], dict[str, list[int]]]:
         super()._finalize()
-        self.__add_datapoints(self.last_ts)
+        self.__add_snapshot(self.last_ts)
         return self.x, self.y
