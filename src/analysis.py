@@ -54,22 +54,22 @@ class TopContributorAnalysis(MessageAnalysis):
 
     def _on_message(self, message: Message) -> None:
         timestamp = message.time
-        author = message.author
+        author_id = message.author_id
 
-        session_start, session_end = self.open_sessions.get(author, (timestamp, timestamp))
+        session_start, session_end = self.open_sessions.get(author_id, (timestamp, timestamp))
         if self.__to_minutes(timestamp - session_end) < self.session_timeout:
             session_end = timestamp
-            self.open_sessions[author] = (session_start, session_end)
+            self.open_sessions[author_id] = (session_start, session_end)
         else:
             session_time = self.__to_minutes(session_end - session_start) + self.base_session_time
-            self.total_time[author] = self.total_time.get(author, 0) + session_time
-            del self.open_sessions[author]
+            self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
+            del self.open_sessions[author_id]
     
-    def _finalize(self) -> dict[str, int]:
+    def _finalize(self) -> dict[int, int]:
         # add remaining open sessions to total
-        for author, (session_start, session_end) in self.open_sessions.items():
+        for author_id, (session_start, session_end) in self.open_sessions.items():
             session_time = self.__to_minutes(session_end - session_start) + self.base_session_time
-            self.total_time[author] = self.total_time.get(author, 0) + session_time
+            self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
 
         return self.total_time
 
@@ -106,3 +106,27 @@ class HistoricalTopContributorAnalysis(TopContributorAnalysis):
         super()._finalize()
         self.__add_snapshot(self.last_ts)
         return self.x, self.y
+
+
+class MessageCountAnalysis(MessageAnalysis):
+    def _prepare(self):
+        self.count = {}
+
+    def _on_message(self, message: Message):
+        self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
+
+    def _finalize(self) -> dict[int, int]:
+        return self.count
+
+
+class SelfKekAnalysis(MessageAnalysis):
+    def _prepare(self) -> None:
+        self.count = {}
+
+    def _on_message(self, message: Message) -> None:
+        for emoji_name, users in message.reactions.items():
+            if ('kek' in emoji_name) and (message.author_id in users):
+                self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
+
+    def _finalize(self) -> dict[int, int]:
+        return self.count

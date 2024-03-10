@@ -37,10 +37,10 @@ async def get_username(user_id: int):
         user = client.get_user(user_id) or await client.fetch_user(user_id)
         return user.display_name
     except discord.errors.NotFound:
-        return "Deleted User"
+        return f'<{user_id}>'
 
 
-async def plot_contributor_history(args, stream: MessageStream) -> None:
+async def plot_contributor_history(stream: MessageStream) -> None:
     analysis = HistoricalTopContributorAnalysis(args.log_interval)
     x, y = await analysis.run(stream, args.start, args.end)
 
@@ -53,7 +53,7 @@ async def plot_contributor_history(args, stream: MessageStream) -> None:
     plt.show()
 
 
-async def print_contributors(args, stream: MessageStream) -> None:
+async def print_contributors(stream: MessageStream) -> None:
     analysis = TopContributorAnalysis(args.log_interval)
     contributors = await analysis.run(stream, args.start, args.end)
     top_contributors = heapq.nlargest(args.max_results, contributors.items(), key=lambda a: a[1])
@@ -75,18 +75,18 @@ async def print_contributors(args, stream: MessageStream) -> None:
         print(f'{i+1}. {await get_username(author_id)}: {hours}h {minutes}m')
 
 
-async def main(args):
+async def main():
     args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
     if args.channel:
         stream = SingleChannelMessageStream(client.get_channel(args.channel))
     elif args.channels:
-        stream = MultiChannelMessageStream([client.get_channel(c) for c in args.channels])
+        stream = MultiChannelMessageStream(list(map(client.get_channel, args.channels)))
     else:
         stream = ServerMessageStream(client.get_guild(Server.rocketpool))
 
-    await print_contributors(args, stream)
+    await print_contributors(stream)
 
 
 def parse_args():
@@ -99,16 +99,17 @@ def parse_args():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--channel', type=Channel.argtype, choices=Channel)
     source.add_argument('--channels', type=Channel.argtype, choices=Channel, nargs='+')
-    source.add_argument('--server', type=Server.argtype, choices=Server, default=Server.rocketpool)
+    source.add_argument('--server', type=Server.argtype, choices=Server)
 
     return parser.parse_args()
 
 
 async def on_ready():
-    await main(parse_args())
+    await main()
     await client.close()
 
 if __name__ == '__main__':
     client = discord.Client()
     on_ready = client.event(on_ready)
+    args = parse_args()
     client.run(os.environ['DISCORD_USER_TOKEN'])

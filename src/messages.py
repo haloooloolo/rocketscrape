@@ -2,10 +2,11 @@ import os
 import copy
 import shutil
 import pickle
+import asyncio
 import discord
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator
+from typing import Optional, AsyncIterator, Sequence
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
@@ -17,18 +18,16 @@ class Message:
     def __init__(self, message: discord.Message) -> None:
         self.id: int = message.id
         self.time: datetime = message.created_at
-        self.author: int = message.author.id
+        self.author_id: int = message.author.id
         self.content: str = message.content
-        self.reactions: dict[str, list[int]] = {}
+        self.reactions: dict[str, set[int]] = {}
 
     async def __load_metadata(self, message: discord.Message) -> None:
-        for reaction in message.reactions:
-            emoji = str(reaction.emoji)
-            users = [member.id async for member in reaction.users()]
-            self.reactions[emoji] = users
+        async def gather_reactors(_reaction):
+            return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
-    def __eq__(self, other) -> bool:
-        return self.id == other.id
+        for emoji, users in await asyncio.gather(*[gather_reactors(r) for r in message.reactions]):
+            self.reactions[emoji] = users
 
     @staticmethod
     async def fetch(message: discord.Message) -> 'Message':
@@ -36,8 +35,11 @@ class Message:
         await m.__load_metadata(message)
         return m
 
+    def __eq__(self, other) -> bool:
+        return self.id == other.id
+
     def __repr__(self) -> str:
-        return f'Message{{{self.author} @ {self.time}: "{self.content}"}}'
+        return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
     def __hash__(self):
         return self.id
@@ -181,7 +183,7 @@ class SingleChannelMessageStream:
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: list[discord.TextChannel | discord.Thread]) -> None:
+    def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread]) -> None:
         self.channels = [SingleChannelMessageStream(channel) for channel in channels]
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
