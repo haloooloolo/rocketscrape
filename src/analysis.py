@@ -383,7 +383,7 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
             self.count[message.author_id] = self.count.get(message.author_id, 0) + num_reactions
 
     def _title(self) -> str:
-        return f'{self.stream} members by {self.emoji} given'
+        return f'{self.stream} members by {self.emoji} received'
 
     @staticmethod
     def subcommand() -> str:
