@@ -280,7 +280,6 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     def subcommand() -> str:
         return 'reactions-received'
 
-
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
         super().__init__(stream, log_interval)

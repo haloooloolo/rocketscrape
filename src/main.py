@@ -11,24 +11,27 @@ from messages import SingleChannelMessageStream, MultiChannelMessageStream, Serv
 from analysis import MessageAnalysis
 
 
-class _EnumArg(Enum):
+class _EnumArg(IntEnum):
     @classmethod
-    def argtype(cls, s: str) -> Enum:
+    def argtype(cls, s: str) -> int:
         try:
             return cls[s]
         except KeyError:
-            raise argparse.ArgumentTypeError(
-                f"{s!r} is not a valid {cls.__name__}")
+            try:
+                return int(s)
+            except ValueError:
+                raise argparse.ArgumentTypeError(
+                    f"{s!r} is not a valid {cls.__name__}")
 
     def __str__(self):
         return self.name
 
 
-class Server(_EnumArg, IntEnum):
+class Server(_EnumArg):
     rocketpool = 405159462932971535
 
 
-class Channel(_EnumArg, IntEnum):
+class Channel(_EnumArg):
     general = 704196071881965589
     trading = 405163713063288832
     support = 468923220607762485
@@ -60,19 +63,28 @@ def get_subclasses(cls: type) -> set[type]:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(prog='RocketScrape')
+    parser = argparse.ArgumentParser(prog='RocketScrape',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     analysis_types = {cls.subcommand(): cls for cls in get_subclasses(MessageAnalysis)}
     parser.add_argument('analysis', choices=analysis_types.keys())
 
-    parser.add_argument('-s', '--start', type=datetime.fromisoformat)
-    parser.add_argument('-e', '--end', type=datetime.fromisoformat)
-    parser.add_argument('-r', '--max-results', type=int, default=10)
-    parser.add_argument('-l', '--log-interval', type=int, default=1)
+    parser.add_argument('-s', '--start', type=datetime.fromisoformat,
+                        help=f'start of date range in ISO format')
+    parser.add_argument('-e', '--end', type=datetime.fromisoformat,
+                        help=f'end of date range in ISO format')
+    parser.add_argument('-r', '--max-results', type=int, default=10,
+                        help=f'maximum length of analysis output')
+    parser.add_argument('-l', '--log-interval', type=int, default=1,
+                        help='frequency of progress logs in seconds')
 
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--channels', type=Channel.argtype, choices=Channel, nargs='+')
-    source.add_argument('--server', type=Server.argtype, choices=Server)
+    channel_choices = tuple((c.name for c in Channel))
+    source.add_argument('--channels', type=Channel.argtype, nargs='+',
+                        help=f'one or more of {channel_choices} or channel ID(s)')
+    server_choices = tuple((s.name for s in Server))
+    source.add_argument('--server', type=Server.argtype,
+                        help=f'one of {server_choices} or server ID')
 
     _args = parser.parse_args()
     _args.analysis = analysis_types[_args.analysis]
