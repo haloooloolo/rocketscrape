@@ -142,8 +142,8 @@ class SingleChannelMessageStream:
                 return
 
             self.uncommitted_messages.append(_message)
-            if len(self.uncommitted_messages) >= 10_000:
-                print(f'committing {len(self.uncommitted_messages)} new messages to disk...')
+            if len(self.uncommitted_messages) >= 1000:
+                print(f'saving {len(self.uncommitted_messages)} new messages to disk...')
                 self.__commit(start, self.uncommitted_messages[-1].time)
 
         for segment in copy.copy(self.segments):
