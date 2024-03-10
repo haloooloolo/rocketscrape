@@ -12,9 +12,9 @@ CACHE_DIR = 'cache'
 
 class Message:
     def __init__(self, message: discord.Message) -> None:
-        self.time = message.created_at
-        self.author = message.author.name
-        self.content = message.content
+        self.time: datetime = message.created_at
+        self.author: str = message.author.name
+        self.content: str = message.content
 
     def __repr__(self) -> str:
         return f'Message{{{self.author} @ {self.time}: "{self.content}"}}'

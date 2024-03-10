@@ -28,7 +28,7 @@ async def main(args):
     channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
-    contributors = await TopContributorAnalysis().analyze(channel, start, end)
+    contributors = await TopContributorAnalysis().run(channel, start, end)
 
     if start and end:
         range_str = f'from {start} to {end}'
