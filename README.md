@@ -9,6 +9,11 @@ using setuptools by running:
 ```bash
 pip install -e .
 ```
+RocketScrape requires a Discord authentication token for API requests, which should be stored in a
+`DISCORD_USER_TOKEN` environment variable. For more information on how to obtain a token for your account see https://discordpy-self.readthedocs.io/en/latest/authenticating.html.
+```bash
+export DISCORD_USER_TOKEN=<token>
+```
 
 ## Usage
 
