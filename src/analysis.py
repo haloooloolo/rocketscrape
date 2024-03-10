@@ -1,6 +1,7 @@
 import logging
 import heapq
 import re
+from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any
@@ -11,9 +12,24 @@ from client import Client
 from messages import MessageStream, Message
 
 
+@dataclass
+class CustomArgument:
+    name: str
+    type: type[Any]
+    help: Optional[str] = None
+
+
+@dataclass
+class CustomOption:
+    name: str
+    type: type[Any]
+    default: Any
+    help: Optional[str] = None
+
+
 class MessageAnalysis(ABC):
-    def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
-        self.log_interval = log_interval
+    def __init__(self, stream: MessageStream, args):
+        self.log_interval = timedelta(seconds=args.log_interval)
         self.stream = stream
 
     async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Any:
@@ -65,9 +81,9 @@ class MessageAnalysis(ABC):
     def subcommand() -> str:
         pass
 
-    @staticmethod
-    def custom_args() -> dict[str, tuple[type, str]]:
-        return {}
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        return ()
 
 
 class CountBasedMessageAnalysis(MessageAnalysis):
@@ -95,10 +111,17 @@ class CountBasedMessageAnalysis(MessageAnalysis):
 
 
 class TopContributorAnalysis(MessageAnalysis):
-    def __init__(self, stream, log_interval=1, base_session_time=5, session_timeout=15):
-        super().__init__(stream, log_interval)
-        self.base_session_time = base_session_time
-        self.session_timeout = session_timeout
+    def __init__(self, stream, args):
+        super().__init__(stream, args)
+        self.base_session_time = args.base_session_time
+        self.session_timeout = args.session_timeout
+
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        return MessageAnalysis.custom_args() + (
+            CustomOption('base-session-time', int, 5),
+            CustomOption('session-timeout', int, 15)
+        )
         
     @staticmethod
     def __to_minutes(td: timedelta) -> float:
@@ -200,8 +223,8 @@ class MessageCountAnalysis(CountBasedMessageAnalysis):
     def _title(self, stream_name: str, range_str: str) -> str:
         return f'Top {stream_name} contributors by message count {range_str}'
 
-    @classmethod
-    def subcommand(cls) -> str:
+    @staticmethod
+    def subcommand() -> str:
         return 'message-count'
 
 
@@ -220,15 +243,20 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
 
 
 class MissingPersonAnalysis(TopContributorAnalysis):
-    def __init__(self, stream, log_interval=1, base_session_time=5,
-                 session_timeout=15, inactivity_threshold=timedelta(days=90)):
-        super().__init__(stream, log_interval, base_session_time, session_timeout)
-        self.inactivity_threshold = inactivity_threshold
+    def __init__(self, stream, args):
+        super().__init__(stream, args)
+        self.inactivity_threshold = args.inactivity_threshold
+
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        return TopContributorAnalysis.custom_args() + (
+            CustomOption('inactivity_threshold', int, 90),
+        )
 
     def _prepare(self) -> None:
         super()._prepare()
-        self.last_seen = {}
-        self.last_ts = None
+        self.last_seen: dict[int, datetime] = {}
+        self.last_ts: Optional[datetime] = None
 
     def _on_message(self, message: Message) -> None:
         super()._on_message(message)
@@ -286,8 +314,8 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
 
 
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
-    def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
-        super().__init__(stream, log_interval)
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
         self.__thank_pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
 
     def _on_message(self, message: Message) -> None:
@@ -311,21 +339,48 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
 
 
 class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
-    def __init__(self, stream: MessageStream, emoji: str, log_interval=1):
-        super().__init__(stream, log_interval)
-        self.emoji = emoji
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.emoji = args.react
+
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        print(cls.__bases__)
+        return CountBasedMessageAnalysis.custom_args() + (
+            CustomArgument('react', str, 'emoji to count received reactions for'),
+        )
 
     def _on_message(self, message: Message) -> None:
-        for user in message.reactions.get('🔨', []):
-            self.count[user] = self.count.get(user, 0) + 1
+        if self.emoji in message.reactions:
+            num_reactions = len(message.reactions[self.emoji])
+            self.count[message.author_id] = self.count.get(message.author_id, 0) + num_reactions
 
     def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members by 🔨 given {range_str}'
+        return f'{stream_name} members by {self.emoji} given {range_str}'
 
     @staticmethod
     def subcommand() -> str:
-        return 'single-reaction-received'
+        return 'reaction-received-count'
+
+
+class ReactionGivenAnalysis(CountBasedMessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.emoji = args.react
+
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        return CountBasedMessageAnalysis.custom_args() + (
+            CustomArgument('react', str, 'emoji to count given reactions for'),
+        )
+
+    def _on_message(self, message: Message) -> None:
+        for user in message.reactions.get(self.emoji, []):
+            self.count[user] = self.count.get(user, 0) + 1
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'{stream_name} members by {self.emoji} given {range_str}'
 
     @staticmethod
-    def custom_args() -> dict[str, tuple[type, str]]:
-        return {'react': (str, 'emoji to count received reactions for')}
+    def subcommand() -> str:
+        return 'reaction-given-count'

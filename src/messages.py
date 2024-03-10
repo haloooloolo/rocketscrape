@@ -92,11 +92,11 @@ class Message:
         return self.id
 
 
+@dataclass
 class _CacheSegment:
-    def __init__(self, start: datetime, end: datetime, messages: Sequence[Message]):
-        self.start = start
-        self.end = end
-        self.messages: dict[int, Message] = {msg.id: msg for msg in messages}
+    start: datetime
+    end: datetime
+    messages: dict[int, Message]
 
     def merge(self, others: list['_CacheSegment']) -> None:
         self.start = min(self.start, others[0].start)
@@ -132,7 +132,7 @@ class MessageStream(ABC):
 class SingleChannelMessageStream(MessageStream):
     def __init__(self, channel: discord.TextChannel | discord.Thread, cache_dir='cache') -> None:
         self.channel = channel
-        self.uncommitted_messages = []
+        self.uncommitted_messages: dict[int, Message] = {}
         self.cache_dir = cache_dir
         try:
             self.segments = self.__load()
@@ -154,9 +154,9 @@ class SingleChannelMessageStream(MessageStream):
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         if not end:
             if self.segments:
-                end = list(self.segments[-1].messages.values())[-1].time
+                end = next(reversed(self.segments[-1].messages.values())).time
             elif self.uncommitted_messages:
-                end = self.uncommitted_messages[-1].time
+                end = next(reversed(self.uncommitted_messages.values())).time
             else:
                 return
         low, high, successor = None, None, None
@@ -188,9 +188,14 @@ class SingleChannelMessageStream(MessageStream):
             pickle.dump(self.segments, file)
 
     def get_message(self, message_id: int) -> Optional[Message]:
+        if message_id in self.uncommitted_messages:
+            return self.uncommitted_messages[message_id]
+
         for segment in self.segments:
             if message_id in segment.messages:
                 return segment.messages[message_id]
+
+        return None
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
@@ -201,13 +206,13 @@ class SingleChannelMessageStream(MessageStream):
             now = datetime.now().replace(tzinfo=timezone.utc)
 
             if not from_cache:
-                self.uncommitted_messages.append(_message)
+                self.uncommitted_messages[_message.id] = _message
             elif (now - _message.time) < timedelta(hours=24):
-                await message.refresh(self.channel)
-                self.uncommitted_messages.append(_message)
+                await _message.refresh(self.channel)
+                self.uncommitted_messages[_message.id] = _message
 
             if len(self.uncommitted_messages) >= 2500:
-                self.__commit(start, self.uncommitted_messages[-1].time)
+                self.__commit(start, last_timestamp)
 
         for segment in copy.copy(self.segments):
             # segment ahead of requested interval, skip

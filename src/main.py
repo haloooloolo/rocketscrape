@@ -3,12 +3,12 @@ import argparse
 import logging
 import inspect
 
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from enum import IntEnum
 
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, Message
-from analysis import MessageAnalysis
+from analysis import MessageAnalysis, CustomArgument, CustomOption
 
 
 class _EnumArg(IntEnum):
@@ -48,7 +48,7 @@ async def main() -> None:
     else:
         stream = SingleChannelMessageStream(client.get_channel(args.channels[0]))
 
-    analysis = args.analysis(stream, timedelta(seconds=args.log_interval))
+    analysis = args.analysis(stream, args)
     result = await analysis.run(args.start, args.end)
     await analysis.present(result, client, stream, args)
 
@@ -66,8 +66,13 @@ def parse_args():
     parser = argparse.ArgumentParser(prog='RocketScrape',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
-    analysis_types = {cls.subcommand(): cls for cls in get_subclasses(MessageAnalysis)}
-    parser.add_argument('analysis', choices=analysis_types.keys())
+    source = parser.add_mutually_exclusive_group(required=True)
+    channel_choices = tuple((c.name for c in Channel))
+    source.add_argument('-c', '--channels', type=Channel.argtype, action='append',
+                        help=f'one or more of {channel_choices} or channel ID(s)')
+    server_choices = tuple((s.name for s in Server))
+    source.add_argument('--server', type=Server.argtype,
+                        help=f'one of {server_choices} or server ID')
 
     parser.add_argument('-s', '--start', type=datetime.fromisoformat,
                         help=f'start of date range in ISO format')
@@ -78,17 +83,25 @@ def parse_args():
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
 
-    source = parser.add_mutually_exclusive_group(required=True)
-    channel_choices = tuple((c.name for c in Channel))
-    source.add_argument('--channels', type=Channel.argtype, nargs='+',
-                        help=f'one or more of {channel_choices} or channel ID(s)')
-    server_choices = tuple((s.name for s in Server))
-    source.add_argument('--server', type=Server.argtype,
-                        help=f'one of {server_choices} or server ID')
+    def add_custom_arg(_parser, _arg):
+        if isinstance(_arg, CustomArgument):
+            _parser.add_argument(_arg.name, type=_arg.type, help=_arg.help)
+        elif isinstance(_arg, CustomOption):
+            _parser.add_argument(f'--{_arg.name}', type=_arg.type,
+                                default=_arg.default,help=_arg.help, required=True)
 
-    _args = parser.parse_args()
-    _args.analysis = analysis_types[_args.analysis]
-    return _args
+    base_cls = MessageAnalysis
+    for arg in base_cls.custom_args():
+        add_custom_arg(parser, arg)
+
+    subparsers = parser.add_subparsers(title='analysis subcommands')
+    for cls in get_subclasses(base_cls):
+        subparser = subparsers.add_parser(cls.subcommand())
+        subparser.set_defaults(analysis=cls)
+        for arg in cls.custom_args():
+            add_custom_arg(subparser, arg)
+
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
