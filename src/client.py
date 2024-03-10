@@ -3,8 +3,6 @@ import discord
 import logging
 from typing import Any, Callable, Awaitable, Optional
 
-from discord.utils import MISSING
-
 
 class Client(discord.Client):
     def __init__(self, func: Callable[['Client'], Awaitable], args: Any):

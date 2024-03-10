@@ -52,8 +52,10 @@ def main():
 
 async def _main(client) -> int:
     args = client.args
-    args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
-    args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
+    if args.start and args.start.tzinfo is None:
+        args.start = args.start.replace(tzinfo=timezone.utc)
+    if args.end and args.end.tzinfo is None:
+        args.end = args.end.replace(tzinfo=timezone.utc)
 
     common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
@@ -92,7 +94,7 @@ def get_subclasses(cls: type[T]) -> set[type[T]]:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(prog='RocketScrape',
+    parser = argparse.ArgumentParser(prog='rocketscrape',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     root_dir = pathlib.Path(__file__).parent.parent.resolve()

@@ -83,7 +83,7 @@ class MessageAnalysis(ABC):
         return range_str
 
     @abstractmethod
-    async def display_result(self, result: Any, client: Client, args) -> None:
+    async def display_result(self, result: Any, client: Client, max_results: int) -> None:
         pass
 
     @staticmethod
@@ -108,7 +108,7 @@ class CountBasedMessageAnalysis(MessageAnalysis):
         return self.count
 
     @abstractmethod
-    def _title(self, stream_name: str, range_str: str) -> str:
+    def _title(self) -> str:
         pass
 
     async def display_result(self, result: Result[dict[int, int]], client: Client, max_results: int) -> None:
@@ -116,7 +116,7 @@ class CountBasedMessageAnalysis(MessageAnalysis):
         top_users = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
         print()
-        print(self._title(str(self.stream), range_str))
+        print(f'{self._title()} {range_str}')
         for i, (user_id, count) in enumerate(top_users):
             print(f'{i + 1}. {await client.get_username(user_id)}: {count}')
 
@@ -179,9 +179,10 @@ class TopContributorAnalysis(MessageAnalysis):
         return 'contributors'
 
 
-class ContributorHistoryAnalysis:
+class ContributorHistoryAnalysis(MessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        self.__contributor_analyis = TopContributorAnalysis(stream, *args)
+        super().__init__(stream, args)
+        self.__contributor_analysis = TopContributorAnalysis(stream, args)
         self.interval = timedelta(days=args.snapshot_interval)
 
     @classmethod
@@ -191,14 +192,14 @@ class ContributorHistoryAnalysis:
         )
 
     def _prepare(self) -> None:
-        self.__contributor_analyis._prepare()
+        self.__contributor_analysis._prepare()
         self.x: list[datetime] = []
         self.y: dict[int, list[float]] = {}
         self.next_date: Optional[datetime] = None
         self.last_ts: Optional[datetime] = None
 
     def __add_snapshot(self, date: datetime) -> None:
-        for author, time_min in self.__contributor_analyis.total_time.items():
+        for author, time_min in self.__contributor_analysis.total_time.items():
             if author not in self.y:
                 self.y[author] = [0.0] * len(self.x)
             self.y[author].append(time_min)
@@ -206,7 +207,7 @@ class ContributorHistoryAnalysis:
         self.x.append(date)
 
     def _on_message(self, message: Message) -> None:
-        self.__contributor_analyis._on_message(message)
+        self.__contributor_analysis._on_message(message)
         self.last_ts = message.time
 
         if self.next_date is None:
@@ -218,7 +219,7 @@ class ContributorHistoryAnalysis:
         self.next_date += self.interval
 
     def _finalize(self) -> tuple[list[datetime], dict[int, list[float]]]:
-        self.__contributor_analyis._finalize()
+        self.__contributor_analysis._finalize()
         if self.last_ts:
             self.__add_snapshot(self.last_ts)
         return self.x, self.y
@@ -232,7 +233,7 @@ class ContributorHistoryAnalysis:
 
         plt.ylabel('time (mins)')
         plt.legend()
-        plt.title(f'Top {self.__contributor_analyis.stream} contributors over time'
+        plt.title(f'Top {self.stream} contributors over time'
                   .encode('ascii', 'ignore').decode('ascii'))
         plt.show()
 
@@ -245,8 +246,8 @@ class MessageCountAnalysis(CountBasedMessageAnalysis):
     def _on_message(self, message: Message) -> None:
         self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'Top {stream_name} contributors by message count {range_str}'
+    def _title(self) -> str:
+        return f'Top {self.stream} contributors by message count'
 
     @staticmethod
     def subcommand() -> str:
@@ -259,8 +260,8 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
             if ('kek' in emoji_name) and (message.author_id in users):
                 self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'Top {stream_name} self kek offenders {range_str}'
+    def _title(self) -> str:
+        return f'Top {self.stream} self kek offenders'
 
     @staticmethod
     def subcommand() -> str:
@@ -270,12 +271,13 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
 class MissingPersonAnalysis(TopContributorAnalysis):
     def __init__(self, stream, args):
         super().__init__(stream, args)
-        self.inactivity_threshold = args.inactivity_threshold
+        self.inactivity_threshold = timedelta(days=args.inactivity_threshold)
 
     @classmethod
     def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
         return TopContributorAnalysis.custom_args() + (
-            CustomOption('inactivity_threshold', int, 90),
+            CustomOption('inactivity_threshold', int, 90,
+                         'number of days without activity required to be considered inactive'),
         )
 
     def _prepare(self) -> None:
@@ -318,8 +320,8 @@ class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
             for user_id in users:
                 self.count[user_id] = self.count.get(user_id, 0) + 1
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members with most reactions given {range_str}'
+    def _title(self) -> str:
+        return f'{self.stream} members with most reactions given'
 
     @staticmethod
     def subcommand() -> str:
@@ -331,8 +333,8 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
         for emoji_name, users in message.reactions.items():
             self.count[message.author_id] = self.count.get(message.author_id, 0) + len(users)
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members with most reactions received {range_str}'
+    def _title(self) -> str:
+        return f'{self.stream} members with most reactions received'
 
     @staticmethod
     def subcommand() -> str:
@@ -356,8 +358,8 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
         for user_id in mentions:
             self.count[user_id] = self.count.get(user_id, 0) + 1
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members thanked most often {range_str}'
+    def _title(self) -> str:
+        return f'{self.stream} members thanked most often'
 
     @staticmethod
     def subcommand() -> str:
@@ -380,8 +382,8 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
             num_reactions = len(message.reactions[self.emoji])
             self.count[message.author_id] = self.count.get(message.author_id, 0) + num_reactions
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members by {self.emoji} given {range_str}'
+    def _title(self) -> str:
+        return f'{self.stream} members by {self.emoji} given'
 
     @staticmethod
     def subcommand() -> str:
@@ -403,8 +405,8 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
         for user in message.reactions.get(self.emoji, []):
             self.count[user] = self.count.get(user, 0) + 1
 
-    def _title(self, stream_name: str, range_str: str) -> str:
-        return f'{stream_name} members by {self.emoji} given {range_str}'
+    def _title(self) -> str:
+        return f'{self.stream} members by {self.emoji} given'
 
     @staticmethod
     def subcommand() -> str:

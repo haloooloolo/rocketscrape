@@ -216,7 +216,7 @@ class SingleChannelMessageStream(MessageStream):
         async def handle_message(_message: Message, from_cache=False) -> None:
             nonlocal last_timestamp
             last_timestamp = _message.time
-            now = datetime.now().replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
 
             if not from_cache:
                 self.uncommitted_messages[_message.id] = _message
