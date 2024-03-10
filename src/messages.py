@@ -4,9 +4,11 @@ import pickle
 import asyncio
 import logging
 import heapq
+import re
 
 import discord
 import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from abc import ABC, abstractmethod
 from typing import Optional, AsyncIterator, Sequence, Any
@@ -16,6 +18,8 @@ from dataclasses import dataclass
 
 @dataclass
 class Message:
+    __mention_pattern = re.compile('(?<=<@)[0-9]{18}(?=>)')
+
     def __init__(self, message: discord.Message) -> None:
         self.id: int = message.id
         self.time: datetime = message.created_at
@@ -56,6 +60,10 @@ class Message:
         except discord.NotFound:
             logging.warning(f'Failed to refresh message, ID {self.id} no longer exists.')
 
+    def get_mentions(self) -> set[int]:
+        matches = Message.__mention_pattern.findall(self.content)
+        return {int(match) for match in matches}
+
     def __await__(self):
         return self.__async_init().__await__()
 
@@ -74,6 +82,9 @@ class Message:
     def __lt__(self, other) -> bool:
         return self.time < other.time
 
+    def __gt__(self, other) -> bool:
+        return self.time > other.time
+
     def __repr__(self) -> str:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
@@ -81,35 +92,38 @@ class Message:
         return self.id
 
 
-@dataclass
 class _CacheSegment:
-    start: datetime
-    end: datetime
-    messages: list[Message]
+    def __init__(self, start: datetime, end: datetime, messages: Sequence[Message]):
+        self.start = start
+        self.end = end
+        self.messages: dict[int, Message] = {msg.id: msg for msg in messages}
 
     def merge(self, others: list['_CacheSegment']) -> None:
         self.start = min(self.start, others[0].start)
         self.end = max(self.end, others[-1].end)
 
-        other_messages = sum([s.messages for s in others], [])[::-1]
-        self_messages = self.messages[::-1]
-        self.messages = []
+        other_messages = sum([list(o.messages.values()) for o in others], [])[::-1]
+        self_messages = list(self.messages.values())[::-1]
+        self.messages = {}
 
         while self_messages or other_messages:
-            if (not other_messages) or (self_messages and (self_messages[-1].time <= other_messages[-1].time)):
-                self.messages.append(self_messages.pop())
+            if (not self_messages) or (other_messages and (other_messages[-1].time <= self_messages[-1].time)):
+                # bias to other_messages so last inserted will be from self_messages in case of duplicate
+                message = other_messages.pop()
             else:
-                self.messages.append(other_messages.pop())
+                message = self_messages.pop()
 
-            if other_messages and self.messages[-1] == other_messages[-1]:
-                # avoid duplicates
-                other_messages.pop()
+            self.messages[message.id] = message
 
     def __repr__(self) -> str:
         return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
 
 
 class MessageStream(ABC):
+    @abstractmethod
+    def get_message(self, message_id: int) -> Optional[Message]:
+        pass
+
     @abstractmethod
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         pass
@@ -131,22 +145,30 @@ class SingleChannelMessageStream(MessageStream):
             return pickle.load(file)
 
     def __commit(self, start: Optional[datetime], end: Optional[datetime]) -> None:
-        if not end and not self.uncommitted_messages:
-            return
+        if self.uncommitted_messages:
+            logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
 
-        logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
+        logging.debug(f'start: {start}, end: {end}')
+        logging.debug(str(self.segments))
 
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
-        end = end or self.uncommitted_messages[-1].time
+        if not end:
+            if self.segments:
+                end = list(self.segments[-1].messages.values())[-1].time
+            elif self.uncommitted_messages:
+                end = self.uncommitted_messages[-1].time
+            else:
+                return
         low, high, successor = None, None, None
 
         for segment_nr, segment in enumerate(self.segments):
             if end < segment.start:
                 successor = segment_nr
             elif start <= segment.end:  # segments overlap
-                low = segment_nr if (low is None) else segment_nr
+                low = segment_nr if (low is None) else low
                 high = segment_nr
 
+        logging.debug(f'l: {low}, h: {high}, s: {successor}')
         new_segment = _CacheSegment(start, end, copy.copy(self.uncommitted_messages))
         self.uncommitted_messages.clear()
 
@@ -160,9 +182,15 @@ class SingleChannelMessageStream(MessageStream):
 
         os.makedirs(self.cache_dir, exist_ok=True)
         path = os.path.join(self.cache_dir, f'{self.channel.id}.pkl')
+        logging.debug(str(self.segments))
 
         with open(path, 'wb') as file:
             pickle.dump(self.segments, file)
+
+    def get_message(self, message_id: int) -> Optional[Message]:
+        for segment in self.segments:
+            if message_id in segment.messages:
+                return segment.messages[message_id]
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
@@ -197,7 +225,7 @@ class SingleChannelMessageStream(MessageStream):
 
                 yield message
 
-            for message in segment.messages:
+            for message in segment.messages.values():
                 if end and message.time > end:
                     self.__commit(start, end)
                     return 
@@ -226,14 +254,22 @@ class MultiChannelMessageStream(MessageStream):
     def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread]) -> None:
         self.streams = [SingleChannelMessageStream(channel) for channel in channels]
 
+    def get_message(self, message_id: int) -> Optional[Message]:
+        for stream in self.streams:
+            if message := stream.get_message(message_id):
+                return message
+
+        return None
+
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         logging.info('Fetching channel stream heads...')
         heads = []
 
-        for stream in tqdm.tqdm(self.streams):
-            iterator = stream.get_history(start, end)
-            if head := await anext(iterator, None):
-                heads.append((head, iterator))
+        with logging_redirect_tqdm():
+            for stream in tqdm.tqdm(self.streams):
+                iterator = stream.get_history(start, end)
+                if head := await anext(iterator, None):
+                    heads.append((head, iterator))
 
         heapq.heapify(heads)
 

@@ -1,5 +1,6 @@
 import logging
 import heapq
+import re
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any
@@ -11,18 +12,19 @@ from messages import MessageStream, Message
 
 
 class MessageAnalysis(ABC):
-    def __init__(self, log_interval=timedelta(seconds=1)):
+    def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
         self.log_interval = log_interval
+        self.stream = stream
 
-    async def run(self, stream: MessageStream, start: Optional[datetime], end: Optional[datetime]) -> Any:
+    async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Any:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
 
-        async for message in stream.get_history(start, end):
+        async for message in self.stream.get_history(start, end):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
-                logging.info(f'Message stream reached {message.time}.')
+                logging.info(f'Message stream reached {message.time}')
                 last_ts = ts
 
             self._on_message(message)
@@ -89,8 +91,8 @@ class CountBasedMessageAnalysis(MessageAnalysis):
 
 
 class TopContributorAnalysis(MessageAnalysis):
-    def __init__(self, log_interval=1, base_session_time=5, session_timeout=15):
-        super().__init__(log_interval)
+    def __init__(self, stream, log_interval=1, base_session_time=5, session_timeout=15):
+        super().__init__(stream, log_interval)
         self.base_session_time = base_session_time
         self.session_timeout = session_timeout
         
@@ -214,9 +216,9 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
 
 
 class MissingPersonAnalysis(TopContributorAnalysis):
-    def __init__(self, log_interval=1, base_session_time=5,
+    def __init__(self, stream, log_interval=1, base_session_time=5,
                  session_timeout=15, inactivity_threshold=timedelta(days=90)):
-        super().__init__(log_interval, base_session_time, session_timeout)
+        super().__init__(stream, log_interval, base_session_time, session_timeout)
         self.inactivity_threshold = inactivity_threshold
 
     def _prepare(self) -> None:
@@ -277,3 +279,28 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'reactions-received'
+
+
+class ThankYouCountAnalysis(CountBasedMessageAnalysis):
+    def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
+        super().__init__(stream, log_interval)
+        self.__thank_pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
+
+    def _on_message(self, message: Message) -> None:
+        content = message.content.lower()
+        if not self.__thank_pattern.search(content):
+            return
+
+        mentions = message.get_mentions()
+        if replied_to := self.stream.get_message(message.reference):
+            mentions.add(replied_to.author_id)
+
+        for user_id in mentions:
+            self.count[user_id] = self.count.get(user_id, 0) + 1
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'{stream_name} users thanked most often {range_str}'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'thank-count'

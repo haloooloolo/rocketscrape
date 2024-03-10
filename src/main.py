@@ -45,8 +45,8 @@ async def main() -> None:
     else:
         stream = SingleChannelMessageStream(client.get_channel(args.channels[0]))
 
-    analysis = args.analysis(timedelta(seconds=args.log_interval))
-    result = await analysis.run(stream, args.start, args.end)
+    analysis = args.analysis(stream, timedelta(seconds=args.log_interval))
+    result = await analysis.run(args.start, args.end)
     await analysis.present(result, client, stream, args)
 
 
