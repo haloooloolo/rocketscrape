@@ -11,7 +11,7 @@ import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, Sequence, Any
+from typing import Optional, AsyncIterator, Iterable, Any
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
@@ -29,23 +29,25 @@ class Message:
         self.attachments: list[str] = [a.content_type for a in message.attachments if a.content_type]
         self.embeds: dict[str, list[str]] = {}
         self.reactions: dict[str, set[int]] = {}
-        self.__message = message
+        self.__message: Optional[discord.Message] = message
 
         for embed in message.embeds:
-            if embed.type not in self.embeds:
-                self.embeds[embed.type] = []
-            self.embeds[embed.type].append(embed.url)
+            if embed.type and embed.url:
+                if embed.type not in self.embeds:
+                    self.embeds[embed.type] = []
+                self.embeds[embed.type].append(embed.url)
 
     async def __async_init(self) -> 'Message':
-        async def gather_reactions(_reaction):
+        async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[int]]:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
         if self.reactions:
             self.reactions.clear()
 
+        assert self.__message is not None
         reactions = [gather_reactions(r) for r in self.__message.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 logging.warning(f'Encountered exception while requesting message reaction: {res}')
             else:
                 emoji, users = res
@@ -120,12 +122,17 @@ class _CacheSegment:
 
 
 class MessageStream(ABC):
+    def get_message(self, message_id: Optional[int]) -> Optional[Message]:
+        if message_id is None:
+            return None
+        return self._get_message(message_id)
+
     @abstractmethod
-    def get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: int) -> Optional[Message]:
         pass
 
     @abstractmethod
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
+    def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         pass
 
 
@@ -193,7 +200,7 @@ class SingleChannelMessageStream(MessageStream):
         with open(path, 'wb') as file:
             pickle.dump(self.segments, file)
 
-    def get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: int) -> Optional[Message]:
         if message_id in self.uncommitted_messages:
             return self.uncommitted_messages[message_id]
 
@@ -263,10 +270,10 @@ class SingleChannelMessageStream(MessageStream):
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread], *args) -> None:
+    def __init__(self, channels: Iterable[discord.TextChannel | discord.Thread], *args) -> None:
         self.streams = [SingleChannelMessageStream(channel, *args) for channel in channels]
 
-    def get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: int) -> Optional[Message]:
         for stream in self.streams:
             if message := stream.get_message(message_id):
                 return message
@@ -300,8 +307,7 @@ class MultiChannelMessageStream(MessageStream):
 class ServerMessageStream(MultiChannelMessageStream):
     def __init__(self, guild: discord.Guild, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
-        threads = list(guild.threads)
-        super().__init__(channels + threads, *args)
+        super().__init__(channels + list(guild.threads), *args)
         self.__stream_args = args
         self.__repr = str(guild)
 

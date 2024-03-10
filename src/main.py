@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 from enum import IntEnum
 from typing import TypeVar
 
+import discord
+
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
 from analysis import MessageAnalysis, CustomArgument, CustomOption
@@ -39,23 +41,35 @@ class Channel(_EnumArg):
     support = 468923220607762485
 
 
-async def main() -> None:
+async def main() -> int:
     args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
     common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
-        stream = await ServerMessageStream(client.get_guild(args.server), *common_stream_args)
-    elif len(args.channels) > 1:
-        stream = MultiChannelMessageStream(
-            list(map(client.get_channel, args.channels)), *common_stream_args)
+        if not (guild := client.get_guild(args.server)):
+            logging.error(f'server {args.server} could not be found')
+            return 1
+        stream = await ServerMessageStream(guild, *common_stream_args)
     else:
-        stream = SingleChannelMessageStream(client.get_channel(args.channels[0]), *common_stream_args)
+        channels: list[discord.TextChannel | discord.Thread] = []
+        for channel_id in args.channels:
+            if not (channel := client.get_channel(channel_id)):
+                logging.error(f'channel {channel_id} could not be found')
+                return 1
+            if isinstance(channel, (discord.TextChannel, discord.Thread)):
+                channels.append(channel)
+
+        if len(channels) > 1:
+            stream = MultiChannelMessageStream(channels, *common_stream_args)
+        else:
+            stream = SingleChannelMessageStream(channels[0], *common_stream_args)
 
     analysis = args.analysis(stream, args)
     result = await analysis.run(args.start, args.end)
-    await analysis.present(result, client, stream, args)
+    await analysis.display_result(result, client, args.max_results)
 
+    return 0
 
 T = TypeVar('T')
 
@@ -97,9 +111,9 @@ def parse_args():
                         help='maximum number of new messages that will be committed to disk at once')
 
     def add_custom_arg(_parser, _arg):
-        if isinstance(_arg, CustomArgument):
+        if type(_arg) is CustomArgument:
             _parser.add_argument(_arg.name, type=_arg.type, help=_arg.help)
-        elif isinstance(_arg, CustomOption):
+        elif type(_arg) is CustomOption:
             _parser.add_argument(f'--{_arg.name}', type=_arg.type,
                                  default=_arg.default, help=_arg.help)
 
@@ -107,7 +121,7 @@ def parse_args():
     for arg in base_cls.custom_args():
         add_custom_arg(parser, arg)
 
-    subparsers = parser.add_subparsers(title='analysis subcommands')
+    subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
     for cls in get_subclasses(base_cls):
         subparser = subparsers.add_parser(cls.subcommand())
         subparser.set_defaults(analysis=cls)
