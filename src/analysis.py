@@ -106,10 +106,10 @@ class TopContributorAnalysis(MessageAnalysis):
 
         print()
         print(f'Top {stream} contributors {range_str}')
-        for i, (author_id, time) in enumerate(top_contributors):
+        for i, (user_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60
-            print(f'{i+1}. {await client.get_username(author_id)}: {hours}h {minutes}m')
+            print(f'{i+1}. {await client.get_username(user_id)}: {hours}h {minutes}m')
 
     @staticmethod
     def subcommand() -> str:
@@ -151,8 +151,8 @@ class ContributionHistoryAnalysis(TopContributorAnalysis):
 
     async def present(self, result: tuple[list[datetime], dict[int, list[int]]], client: Client, stream: MessageStream, args) -> None:
         x, y = result
-        for author_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
-            plt.plot(x, data, label=await client.get_username(author_id))
+        for user_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
+            plt.plot(x, data, label=await client.get_username(user_id))
 
         plt.ylabel('time (mins)')
         plt.legend()
@@ -164,50 +164,50 @@ class ContributionHistoryAnalysis(TopContributorAnalysis):
         return 'contributor-history'
 
 
-class MessageCountAnalysis(MessageAnalysis):
+class CountBasedMessageAnalysis(MessageAnalysis):
     def _prepare(self) -> None:
         self.count = {}
 
+    @abstractmethod
     def _on_message(self, message: Message) -> None:
-        self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
+        pass
 
     def _finalize(self) -> dict[int, int]:
         return self.count
 
+    def _title(self, stream_name: str, range_str: str) -> str:
+        pass
+
     async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
         range_str = self._get_date_range_str(args.start, args.end)
-        top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+        top_users = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
 
         print()
-        print(f'Top {stream} contributors {range_str}')
-        for i, (author_id, count) in enumerate(top_contributors):
-            print(f'{i+1}. {await client.get_username(author_id)}: {count}')
+        print(self._title(str(stream), range_str))
+        for i, (user_id, count) in enumerate(top_users):
+            print(f'{i+1}. {await client.get_username(user_id)}: {count}')
+
+
+class MessageCountAnalysis(CountBasedMessageAnalysis):
+    def _on_message(self, message: Message) -> None:
+        self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'Top {stream_name} contributors {range_str}'
 
     @classmethod
     def subcommand(cls) -> str:
         return 'message-count'
 
 
-class SelfKekAnalysis(MessageAnalysis):
-    def _prepare(self) -> None:
-        self.count = {}
-
+class SelfKekAnalysis(CountBasedMessageAnalysis):
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             if ('kek' in emoji_name) and (message.author_id in users):
                 self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
 
-    def _finalize(self) -> dict[int, int]:
-        return self.count
-
-    async def present(self, result: dict[int, int], client: Client, stream: MessageStream, args) -> None:
-        range_str = self._get_date_range_str(args.start, args.end)
-        top_offenders = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
-
-        print()
-        print(f'Top {stream} self-kek offenders {range_str} ')
-        for i, (author_id, count) in enumerate(top_offenders):
-            print(f'{i+1}. {await client.get_username(author_id)}: {count}')
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'Top {stream_name} self kek offenders {range_str}'
 
     @staticmethod
     def subcommand() -> str:
@@ -251,3 +251,30 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'missing-persons'
+
+
+class ReactionGivenAnalysis(CountBasedMessageAnalysis):
+    def _on_message(self, message: Message) -> None:
+        for emoji_name, users in message.reactions.items():
+            for user_id in users:
+                self.count[user_id] = self.count.get(user_id, 0) + 1
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'{stream_name} members with most reactions given {range_str}'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'reactions-given'
+
+
+class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
+    def _on_message(self, message: Message) -> None:
+        for emoji_name, users in message.reactions.items():
+            self.count[message.author_id] = self.count.get(message.author_id, 0) + len(users)
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'{stream_name} members with most reactions received {range_str}'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'reactions-received'

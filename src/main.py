@@ -1,11 +1,14 @@
+import os
 import argparse
 import logging
+import inspect
 
+from datetime import datetime, timezone
 from enum import Enum, IntEnum
 
 from client import Client
-from messages import *
-from analysis import *
+from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
+from analysis import MessageAnalysis
 
 
 class _EnumArg(Enum):
@@ -47,21 +50,20 @@ async def main() -> None:
     await analysis.present(result, client, stream, args)
 
 
-def get_analysis_types() -> list[type[MessageAnalysis]]:
-    classes = MessageAnalysis.__subclasses__()
+def get_subclasses(cls: type) -> set[type]:
+    classes = [cls]
     i = 0
     while i < len(classes):
         classes.extend(classes[i].__subclasses__())
         i += 1
-    return classes
+    return {c for c in classes if not inspect.isabstract(c)}
 
 
 def parse_args():
     parser = argparse.ArgumentParser(prog='RocketScrape')
 
-    analysis_types = {cls.subcommand(): cls for cls in get_analysis_types()}
-    parser.add_argument('analysis', type=analysis_types.get,
-                        choices=analysis_types.values())
+    analysis_types = {cls.subcommand(): cls for cls in get_subclasses(MessageAnalysis)}
+    parser.add_argument('analysis', choices=analysis_types.keys())
 
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
@@ -72,11 +74,13 @@ def parse_args():
     source.add_argument('--channels', type=Channel.argtype, choices=Channel, nargs='+')
     source.add_argument('--server', type=Server.argtype, choices=Server)
 
-    return parser.parse_args()
+    _args = parser.parse_args()
+    _args.analysis = analysis_types[_args.analysis]
+    return _args
 
 
 if __name__ == '__main__':
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-    client = Client(main)
     args = parse_args()
+    client = Client(main)
     client.run(os.environ['DISCORD_USER_TOKEN'])

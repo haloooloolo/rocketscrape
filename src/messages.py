@@ -43,14 +43,10 @@ class Message:
 
     async def refresh(self, channel: discord.TextChannel | discord.Thread) -> None:
         try:
-            self.__message = await channel.get_partial_message(self.id).fetch()
+            message = await channel.get_partial_message(self.id).fetch()
+            self.__setstate__((await Message(message)).__getstate__())
         except discord.NotFound:
-            logging.warning(f'Failed to refresh message {self.id}, can no longer be found.')
-            return
-
-        self.content: str = self.__message.content
-        self.reactions.clear()
-        await self.__async_init()
+            logging.warning(f'Failed to refresh message, ID {self.id} no longer exists.')
 
     def __await__(self):
         return self.__async_init().__await__()
@@ -170,7 +166,7 @@ class SingleChannelMessageStream(MessageStream):
 
             if not from_cache:
                 self.uncommitted_messages.append(_message)
-            elif (now - _message.time) < timedelta(days=1):
+            elif (now - _message.time) < timedelta(hours=1):
                 await message.refresh(self.channel)
                 self.uncommitted_messages.append(_message)
 
