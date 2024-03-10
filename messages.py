@@ -10,6 +10,7 @@ from dataclasses import dataclass
 CACHE_DIR = 'cache'
 
 
+@dataclass
 class Message:
     def __init__(self, message: discord.Message) -> None:
         self.time: datetime = message.created_at
@@ -49,17 +50,24 @@ class MessageCache:
         post = []
         l, h, s = None, None, None
 
+        s_front = self.uncommitted_messages[0]
+        s_back = self.uncommitted_messages[-1]
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
-        end = end or self.uncommitted_messages[-1].time
-        s_front = self.uncommitted_messages[0].time if self.uncommitted_messages else end
-        s_back = self.uncommitted_messages[-1].time if self.uncommitted_messages else end
+        end = end or s_back.time
 
         for i, segment in enumerate(self.segments):
             if end < segment.start:
                 s = i
             elif start <= segment.end:  # segments overlap
-                pre.extend([m for m in segment.messages if m.time < s_front])
-                post.extend(([m for m in segment.messages if m.time > s_back]))
+                a, b = len(segment.messages), -1
+                for j, m in enumerate(segment.messages):
+                    if m == s_front:
+                        a = j
+                    if m == s_back:
+                        b = j
+
+                pre.extend([m for m in segment.messages[:a] if m.time <= s_front.time])
+                post.extend([m for m in segment.messages[b+1:] if m.time >= s_back.time])
                 start = min(start, segment.start)
                 end = max(end, segment.end)
                 l, h = i if (l is None) else l, i
@@ -75,7 +83,6 @@ class MessageCache:
         os.makedirs(CACHE_DIR, exist_ok=True)
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
         with open(path, 'wb') as file:
-            self.uncommitted_messages.clear()
             return pickle.dump(self.segments, file)
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
@@ -90,7 +97,7 @@ class MessageCache:
             if not from_cache:
                 uncached_messages += 1
 
-            if uncached_messages >= 1000:
+            if uncached_messages >= 10_000:
                 print(f'committing {uncached_messages} new messages to disk...')
                 self.__commit(start, self.uncommitted_messages[-1].time)
                 uncached_messages = 0

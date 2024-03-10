@@ -28,7 +28,9 @@ async def main(args):
     channel = client.get_channel(args.channel.value)
     start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     end = args.end.replace(tzinfo=timezone.utc) if args.end else None
-    contributors = await TopContributorAnalysis().run(channel, start, end)
+
+    analysis = TopContributorAnalysis(args.log_interval)
+    contributors = await analysis.run(channel, start, end)
 
     if start and end:
         range_str = f'from {start} to {end}'
@@ -37,7 +39,7 @@ async def main(args):
     elif end:
         range_str = f'up to {end}'
     else:
-        range_str = ''
+        range_str = '(all time)'
 
     print()
     print(f'Top # {channel} contributors {range_str}')
@@ -53,6 +55,7 @@ def parse_args():
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
     parser.add_argument('-r', '--max-results', type=int, default=10)
+    parser.add_argument('-l', '--log-interval', type=float, default=1)
     return parser.parse_args()
 
 

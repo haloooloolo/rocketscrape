@@ -8,6 +8,9 @@ from messages import MessageCache, Message
 
 
 class MessageAnalysis(ABC):
+    def __init__(self, log_interval=1):
+        self.log_interval = log_interval
+
     async def run(self, channel: discord.TextChannel, start: Optional[datetime], end: Optional[datetime]):
         assert (start is None) or (end is None) or (end > start)
         last_ts = time.time()
@@ -15,7 +18,7 @@ class MessageAnalysis(ABC):
 
         async for message in MessageCache(channel).get_history(start, end):
             ts = time.time()
-            if (ts - last_ts) >= 1:
+            if (ts - last_ts) >= self.log_interval:
                 print(message.time)
                 last_ts = ts
 
@@ -37,7 +40,8 @@ class MessageAnalysis(ABC):
 
 
 class TopContributorAnalysis(MessageAnalysis):
-    def __init__(self, base_session_time=5, session_timeout=15):
+    def __init__(self, log_interval=1, base_session_time=5, session_timeout=15):
+        super().__init__(log_interval)
         self.base_session_time = base_session_time
         self.session_timeout = session_timeout
         
