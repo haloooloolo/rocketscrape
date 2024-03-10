@@ -23,13 +23,13 @@ Below are examples of how to use RocketScrape:
 ```bash
 rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] ANALYSIS 
 ```
-Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel ID or one of the predefined named channels from 
-the Channel enum in [rocketscrape.py](src/rocketscrape.py). Similarly, you can analyze an run it on an entire server by using:
+Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel ID or one of the predefined channel names from 
+the Channel enum in [rocketscrape.py](src/rocketscrape.py). Similarly, you can run it on an entire server using:
 ```bash
 rocketscrape --server SERVER ANALYSIS 
 ```
-`SERVER` can either be a server ID or a name defined in the `Server` enum. There are optional `--start` and
-`--end` arguments that accept an ISO format datetime string to restrict the date range. For instance,
+`SERVER` can either be a server ID or a name defined in the `Server` enum. There are optional `-s / --start` and
+`-e / --end` arguments that accept an ISO format datetime string to restrict the date range. For instance,
 to get the top contributors for the support channel over the last month, you can use:
 ```bash
 rocketscrape -c support -s $(date -d "-1 month" +"%Y-%m-%d") contributors
@@ -38,7 +38,7 @@ For a complete list of global options and analysis types, run the help command:
 ```bash
 rocketscrape -h
 ```
-Additionally, you can access help commands for specific analysis types, such as:
+Additionally, you can access help commands for specific analysis types, e.g.:
 ```bash
 rocketscrape contributor-history -h
 ```
