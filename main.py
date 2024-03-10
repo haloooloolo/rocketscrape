@@ -86,7 +86,7 @@ class MessageCache:
                 message = Message(m)
                 if end and message.time > end:
                     self.__commit(messages, s_low, s_high)
-                    raise StopIteration
+                    return
 
                 messages.append(message)
                 yield message
@@ -97,9 +97,9 @@ class MessageCache:
             for message in segment:
                 if end and message.time > end:
                     self.__commit(messages, s_low, s_high)
-                    raise StopIteration
+                    return 
 
-                if (start is None) or message.time >= start:
+                if (start is None) or (message.time >= start):
                     # TODO binary search
                     messages.append(message)
                     yield message
@@ -147,8 +147,8 @@ async def get_contributors(channel: discord.TextChannel, start: datetime, end: d
 
 async def on_ready():
     channel = client.get_channel(Channel.SUPPORT.value)
-    start = None  # datetime.fromisoformat('2023-01-01').replace(tzinfo=timezone.utc)
-    end = None
+    start = None # datetime.fromisoformat('202-01-01').replace(tzinfo=timezone.utc)
+    end = datetime.fromisoformat('2023-01-15').replace(tzinfo=timezone.utc)
     contributors = await get_contributors(channel, start, end)
     
     if start and end:
@@ -165,6 +165,8 @@ async def on_ready():
         time_mins = round(time)
         hours, minutes = time_mins // 60, time_mins % 60
         print(f'{i+1}. {author}: {hours}h {minutes}m')
+
+    await client.close()
 
 if __name__ == '__main__':
     client = discord.Client()
