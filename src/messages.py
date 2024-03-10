@@ -5,7 +5,7 @@ import pickle
 import discord
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
@@ -29,10 +29,7 @@ class _Segment:
     end: datetime
     messages: list[Message]
 
-    def __repr__(self):
-        return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
-
-    def merge(self, others: list['_Segment']):
+    def merge(self, others: list['_Segment']) -> None:
         self.start = min(self.start, others[0].start)
         self.end = max(self.end, others[-1].end)
 
@@ -46,15 +43,18 @@ class _Segment:
             else:
                 self.messages.append(other_messages.pop())
 
+    def __repr__(self) -> str:
+        return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
 
-class MessageChannel(ABC):
+
+class MessageStream(ABC):
     @abstractmethod
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         pass
 
 
-class MessageSingleChannel:
-    def __init__(self, channel: discord.TextChannel) -> None:
+class SingleChannelMessageStream:
+    def __init__(self, channel: discord.TextChannel | discord.Thread) -> None:
         self.channel = channel
         self.uncommitted_messages = []
         try:
@@ -109,10 +109,10 @@ class MessageSingleChannel:
         if os.path.exists(backup_path):
             os.remove(backup_path)
 
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
 
-        def process_message(_message, from_cache=False):
+        def process_message(_message: Message, from_cache=False) -> None:
             nonlocal last_timestamp
             last_timestamp = _message.time
 
@@ -148,23 +148,23 @@ class MessageSingleChannel:
                     process_message(message, from_cache=True)
                     yield message
 
-        # fill gap between last segment end of requested interval
-        async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
-            message = Message(m)
-            process_message(message)
-            yield message
+        try:
+            # fill gap between last segment end of requested interval
+            async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
+                message = Message(m)
+                process_message(message)
+                yield message
 
-        self.__commit(start, end)
+            self.__commit(start, end)
+        except discord.Forbidden:
+            return
 
 
-class MessageMultiChannel(MessageChannel):
-    def __init__(self, channels: list[discord.TextChannel]) -> None:
-        self.channels = [MessageSingleChannel(channel) for channel in channels]
+class MultiChannelMessageStream(MessageStream):
+    def __init__(self, channels: list[discord.TextChannel | discord.Thread]) -> None:
+        self.channels = [SingleChannelMessageStream(channel) for channel in channels]
 
-    def __repr__(self) -> str:
-        return f'({", ".join([str(c) for c in self.channels])})'
-
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         heads = {}
 
         for channel in self.channels:
@@ -182,3 +182,17 @@ class MessageMultiChannel(MessageChannel):
             heads[candidate] = await anext(candidate, None)
             if not heads[candidate]:
                 del heads[candidate]
+
+    def __repr__(self) -> str:
+        return f'({", ".join([str(c) for c in self.channels])})'
+
+
+class ServerMessageStream(MultiChannelMessageStream):
+    def __init__(self, guild: discord.Guild) -> None:
+        channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
+        threads = list(guild.threads)
+        super().__init__(channels + threads)
+        self.guild = guild
+
+    def __repr__(self) -> str:
+        return str(self.guild)

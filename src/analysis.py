@@ -3,19 +3,19 @@ from abc import ABC, abstractmethod
 from typing import Optional
 from datetime import datetime, timedelta
 
-from messages import MessageChannel, Message
+from messages import MessageStream, Message
 
 
 class MessageAnalysis(ABC):
     def __init__(self, log_interval=1):
         self.log_interval = log_interval
 
-    async def run(self, channel: MessageChannel, start: Optional[datetime], end: Optional[datetime]):
+    async def run(self, stream: MessageStream, start: Optional[datetime], end: Optional[datetime]):
         assert (start is None) or (end is None) or (end > start)
         last_ts = time.time()
         self._prepare()
 
-        async for message in channel.get_history(start, end):
+        async for message in stream.get_history(start, end):
             ts = time.time()
             if (ts - last_ts) >= self.log_interval:
                 print(message.time)
@@ -45,7 +45,7 @@ class TopContributorAnalysis(MessageAnalysis):
         self.session_timeout = session_timeout
         
     @staticmethod
-    def __to_minutes(td: timedelta):
+    def __to_minutes(td: timedelta) -> float:
         return td / timedelta(minutes=1)
     
     def _prepare(self) -> None:
@@ -82,7 +82,7 @@ class HistoricalTopContributorAnalysis(TopContributorAnalysis):
         self.next_date = None
         self.last_ts = None
 
-    def __add_datapoints(self, date) -> None:
+    def __add_datapoints(self, date: datetime) -> None:
         for author, time_min in self.total_time.items():
             if author not in self.y:
                 self.y[author] = [0] * len(self.x)
