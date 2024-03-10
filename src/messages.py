@@ -21,8 +21,16 @@ class Message:
         self.time: datetime = message.created_at
         self.author_id: int = message.author.id
         self.content: str = message.content
+        self.reference: Optional[int] = message.reference.message_id if message.reference else None
+        self.attachments: list[str] = [a.content_type for a in message.attachments if a.content_type]
+        self.embeds: dict[str, list[str]] = {}
         self.reactions: dict[str, set[int]] = {}
         self.__message = message
+
+        for embed in message.embeds:
+            if embed.type not in self.embeds:
+                self.embeds[embed.type] = []
+            self.embeds[embed.type].append(embed.url)
 
     async def __async_init(self) -> 'Message':
         async def gather_reactions(_reaction):
@@ -159,7 +167,7 @@ class SingleChannelMessageStream(MessageStream):
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
 
-        async def process_message(_message: Message, from_cache=False) -> None:
+        async def handle_message(_message: Message, from_cache=False) -> None:
             nonlocal last_timestamp
             last_timestamp = _message.time
             now = datetime.now().replace(tzinfo=timezone.utc)
@@ -181,7 +189,7 @@ class SingleChannelMessageStream(MessageStream):
             # fill gap between last retrieved message and start of this interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
                 message = await Message(m)
-                await process_message(message)
+                await handle_message(message)
 
                 if end and message.time > end:
                     self.__commit(start, end)
@@ -195,14 +203,14 @@ class SingleChannelMessageStream(MessageStream):
                     return 
 
                 if (start is None) or (message.time >= start):
-                    await process_message(message, from_cache=True)
+                    await handle_message(message, from_cache=True)
                     yield message
 
         try:
             # fill gap between last segment end of requested interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
                 message = await Message(m)
-                await process_message(message)
+                await handle_message(message)
                 yield message
 
             self.__commit(start, end)

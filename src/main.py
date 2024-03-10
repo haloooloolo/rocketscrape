@@ -3,11 +3,11 @@ import argparse
 import logging
 import inspect
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from enum import Enum, IntEnum
 
 from client import Client
-from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
+from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, Message
 from analysis import MessageAnalysis
 
 
@@ -45,7 +45,7 @@ async def main() -> None:
     else:
         stream = SingleChannelMessageStream(client.get_channel(args.channels[0]))
 
-    analysis = args.analysis(args.log_interval)
+    analysis = args.analysis(timedelta(seconds=args.log_interval))
     result = await analysis.run(stream, args.start, args.end)
     await analysis.present(result, client, stream, args)
 
@@ -68,7 +68,7 @@ def parse_args():
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
     parser.add_argument('-r', '--max-results', type=int, default=10)
-    parser.add_argument('-l', '--log-interval', type=float, default=1.0)
+    parser.add_argument('-l', '--log-interval', type=int, default=1)
 
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--channels', type=Channel.argtype, choices=Channel, nargs='+')
