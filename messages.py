@@ -4,7 +4,7 @@ import pickle
 import discord
 
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 CACHE_DIR = 'cache'
@@ -49,7 +49,7 @@ class MessageCache:
         post = []
         l, h, s = None, None, None
 
-        start = start or datetime.fromtimestamp(0)
+        start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         end = end or self.uncommitted_messages[-1].time
         s_front = self.uncommitted_messages[0].time if self.uncommitted_messages else end
         s_back = self.uncommitted_messages[-1].time if self.uncommitted_messages else end
@@ -57,14 +57,12 @@ class MessageCache:
         for i, segment in enumerate(self.segments):
             if end < segment.start:
                 s = i
-            if segment.start <= start <= segment.end:
+            elif start <= segment.end:  # segments overlap
                 pre.extend([m for m in segment.messages if m.time < s_front])
-                start = segment.start
-                l, h = i if l is None else l, i
-            if segment.start <= end <= segment.end:
                 post.extend(([m for m in segment.messages if m.time > s_back]))
-                end = segment.end
-                l, h = i if l is None else l, i
+                start = min(start, segment.start)
+                end = max(end, segment.end)
+                l, h = i if (l is None) else l, i
 
         new_segment = _Segment(start, end, pre + self.uncommitted_messages + post)
         if (l is not None) and (h is not None):
