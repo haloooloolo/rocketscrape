@@ -30,8 +30,10 @@ class Message:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
         reactions = [gather_reactions(r) for r in self.__message.reactions]
-        for emoji, users in await asyncio.gather(*reactions):
-            self.reactions[emoji] = users
+        for res in await asyncio.gather(*reactions, return_exceptions=True):
+            if not isinstance(res, Exception):
+                emoji, users = res
+                self.reactions[emoji] = users
 
         return self
 
@@ -108,6 +110,8 @@ class SingleChannelMessageStream:
         if not end and not self.uncommitted_messages:
             return
 
+        print(f'saving {len(self.uncommitted_messages)} new messages from {self} to disk...')
+
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         end = end or self.uncommitted_messages[-1].time
         low, high, successor = None, None, None
@@ -132,16 +136,9 @@ class SingleChannelMessageStream:
 
         os.makedirs(CACHE_DIR, exist_ok=True)
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
-        backup_path = os.path.join(CACHE_DIR, f'{self.channel.id}_backup.pkl')
-
-        if os.path.exists(path):
-            shutil.move(path, backup_path)
 
         with open(path, 'wb') as file:
             pickle.dump(self.segments, file)
-
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
         last_timestamp = start
@@ -154,8 +151,7 @@ class SingleChannelMessageStream:
                 return
 
             self.uncommitted_messages.append(_message)
-            if len(self.uncommitted_messages) >= 1000:
-                print(f'saving {len(self.uncommitted_messages)} new messages to disk...')
+            if len(self.uncommitted_messages) >= 2500:
                 self.__commit(start, self.uncommitted_messages[-1].time)
 
         for segment in copy.copy(self.segments):

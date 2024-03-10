@@ -79,12 +79,12 @@ async def main():
     args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
-    if args.channel:
-        stream = SingleChannelMessageStream(client.get_channel(args.channel))
-    elif args.channels:
+    if args.server:
+        stream = await ServerMessageStream(client.get_guild(args.server))
+    elif len(args.channels) > 1:
         stream = MultiChannelMessageStream(list(map(client.get_channel, args.channels)))
     else:
-        stream = await ServerMessageStream(client.get_guild(Server.rocketpool))
+        stream = SingleChannelMessageStream(client.get_channel(args.channel[0]))
 
     await print_contributors(stream)
 
@@ -97,7 +97,6 @@ def parse_args():
     parser.add_argument('-l', '--log-interval', type=float, default=1.0)
 
     source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument('--channel', type=Channel.argtype, choices=Channel)
     source.add_argument('--channels', type=Channel.argtype, choices=Channel, nargs='+')
     source.add_argument('--server', type=Server.argtype, choices=Server)
 
