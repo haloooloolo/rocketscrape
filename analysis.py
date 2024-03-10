@@ -1,3 +1,4 @@
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 from datetime import datetime, timedelta
@@ -25,12 +26,17 @@ class TopContributorAnalysis(MessageAnalysis):
         assert (start is None) or (end is None) or (end > start)
         open_sessions = {}
         total_time = {}
+        last_ts = time.time()
     
         async for message in MessageCache(channel).get_history(start, end):
             timestamp = message.time
             author = message.author
-            print(timestamp)
-            
+
+            ts = time.time()
+            if (ts - last_ts) >= 1:
+                print(timestamp)
+                last_ts = ts
+
             session_start, session_end = open_sessions.get(author, (timestamp, timestamp))
             if self.__to_minutes(timestamp - session_end) < self.session_timeout:
                 session_end = timestamp

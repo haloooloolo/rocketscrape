@@ -1,3 +1,4 @@
 .fleet
 __pycache__
 *.pkl
+.DS_STORE

@@ -4,7 +4,7 @@ import discord
 
 from typing import Optional
 from datetime import datetime
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 CACHE_DIR = 'cache'
 
@@ -20,47 +20,45 @@ class Message:
 
 
 @dataclass
-class Segment:
+class _Segment:
     start: datetime
     end: datetime
-    messages: list[Message] = field(default_factory=list)
-
-    def add(self, message: Message):
-        # assume chronological order for now
-        self.messages.append(message)
-        if self.start is None:
-            self.start = message.time
-        if self.end is None or self.end < message.time:
-            self.end = message.time
+    messages: list[Message]
 
 
 class MessageCache:
     def __init__(self, channel: discord.TextChannel) -> None:
         self.channel = channel
+        self.uncommitted_messages = []
         try:
-            # TODO linked list
             self.segments = self.__load()
         except (FileNotFoundError, EOFError):
             self.segments = []
 
-    def __load(self) -> list[Segment]:
+    def __load(self) -> list[_Segment]:
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
         with open(path, 'rb') as file:
             return pickle.load(file)
 
-    def __commit(self, new_segment: Segment):
+    def __commit(self, start: Optional[datetime], end: Optional[datetime]):
         pre = []
         post = []
         l, h = None, None
 
+        if not self.uncommitted_messages:
+            return
+
+        start = start or self.uncommitted_messages[0].time
+        end = end or self.uncommitted_messages[-1].time
+        new_segment = _Segment(start, end, self.uncommitted_messages)
+
         for i, segment in enumerate(self.segments):
-            # TODO binary search
             if segment.start <= new_segment.start <= segment.end:
-                pre.extend([m for m in segment.messages if m.time <= new_segment.start])
+                pre.extend([m for m in segment.messages if m.time < new_segment.messages[0].time])
                 new_segment.start = segment.start
                 l, h = l or i, i
             if segment.start <= new_segment.end <= segment.end:
-                post.extend(([m for m in segment.messages if m.time >= new_segment.end]))
+                post.extend(([m for m in segment.messages if m.time > new_segment.messages[-1].time]))
                 new_segment.end = segment.end
                 l, h = l or i, i
 
@@ -73,13 +71,19 @@ class MessageCache:
         os.makedirs(CACHE_DIR, exist_ok=True)
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
         with open(path, 'wb') as file:
+            self.uncommitted_messages.clear()
             return pickle.dump(self.segments, file)
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]):
-        new_segment = Segment(start, end)
+        last_timestamp = start
 
-        def last_timestamp():
-            return start if not new_segment.messages else new_segment.messages[-1].time
+        def process_message(_message):
+            nonlocal last_timestamp
+            last_timestamp = _message.time
+
+            self.uncommitted_messages.append(_message)
+            if len(self.uncommitted_messages) >= 100:
+                self.__commit(start, self.uncommitted_messages[-1].time)
 
         for segment in self.segments:
             # segment ahead of requested interval, skip
@@ -87,29 +91,28 @@ class MessageCache:
                 continue
 
             # fill gap between last retrieved message and start of this interval
-            async for m in self.channel.history(limit=None, after=last_timestamp(), before=segment.start, oldest_first=True):
+            async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
                 message = Message(m)
                 if end and message.time > end:
-                    self.__commit(new_segment)
+                    self.__commit(start, end)
                     return
 
-                new_segment.add(message)
+                process_message(message)
                 yield message
 
             for message in segment.messages:
                 if end and message.time > end:
-                    self.__commit(new_segment)
+                    self.__commit(start, end)
                     return 
 
                 if (start is None) or (message.time >= start):
-                    # TODO binary search
-                    new_segment.add(message)
+                    process_message(message)
                     yield message
 
         # fill gap between last segment end of requested interval
-        async for m in self.channel.history(limit=None, after=last_timestamp(), before=end, oldest_first=True):
+        async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
             message = Message(m)
-            new_segment.add(message)
+            process_message(message)
             yield message
 
-        self.__commit(new_segment)
+        self.__commit(start, end)
