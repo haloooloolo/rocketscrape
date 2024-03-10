@@ -89,7 +89,7 @@ class Message:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
     def __hash__(self) -> int:
-        return self.id
+        return hash(self.id)
 
 
 @dataclass
@@ -130,10 +130,16 @@ class MessageStream(ABC):
 
 
 class SingleChannelMessageStream(MessageStream):
-    def __init__(self, channel: discord.TextChannel | discord.Thread, cache_dir='cache') -> None:
+    def __init__(self,
+                 channel: discord.TextChannel | discord.Thread,
+                 cache_dir: str,
+                 refresh_window: int,
+                 commit_batch_size: int) -> None:
         self.channel = channel
         self.uncommitted_messages: dict[int, Message] = {}
         self.cache_dir = cache_dir
+        self.refresh_window = timedelta(hours=refresh_window)
+        self.commit_batch_size = commit_batch_size
         try:
             self.segments = self.__load()
         except (FileNotFoundError, EOFError):
@@ -207,11 +213,11 @@ class SingleChannelMessageStream(MessageStream):
 
             if not from_cache:
                 self.uncommitted_messages[_message.id] = _message
-            elif (now - _message.time) < timedelta(hours=24):
+            elif (now - _message.time) <= self.refresh_window:
                 await _message.refresh(self.channel)
                 self.uncommitted_messages[_message.id] = _message
 
-            if len(self.uncommitted_messages) >= 2500:
+            if len(self.uncommitted_messages) >= self.commit_batch_size:
                 self.__commit(start, last_timestamp)
 
         for segment in copy.copy(self.segments):
@@ -220,7 +226,8 @@ class SingleChannelMessageStream(MessageStream):
                 continue
 
             # fill gap between last retrieved message and start of this interval
-            async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
+            async for m in self.channel.history(limit=None, after=last_timestamp,
+                                                before=segment.start, oldest_first=True):
                 message = await Message(m)
                 await handle_message(message)
 
@@ -256,8 +263,8 @@ class SingleChannelMessageStream(MessageStream):
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread]) -> None:
-        self.streams = [SingleChannelMessageStream(channel) for channel in channels]
+    def __init__(self, channels: Sequence[discord.TextChannel | discord.Thread], *args) -> None:
+        self.streams = [SingleChannelMessageStream(channel, *args) for channel in channels]
 
     def get_message(self, message_id: int) -> Optional[Message]:
         for stream in self.streams:
@@ -291,10 +298,11 @@ class MultiChannelMessageStream(MessageStream):
 
 
 class ServerMessageStream(MultiChannelMessageStream):
-    def __init__(self, guild: discord.Guild) -> None:
+    def __init__(self, guild: discord.Guild, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         threads = list(guild.threads)
-        super().__init__(channels + threads)
+        super().__init__(channels + threads, *args)
+        self.__stream_args = args
         self.__repr = str(guild)
 
     async def __async_init(self) -> 'ServerMessageStream':
@@ -302,8 +310,8 @@ class ServerMessageStream(MultiChannelMessageStream):
         for stream in self.streams:
             if isinstance(stream.channel, discord.TextChannel):
                 try:
-                    archived_threads = stream.channel.archived_threads(limit=None)
-                    self.streams.extend([SingleChannelMessageStream(t) async for t in archived_threads])
+                    async for t in stream.channel.archived_threads(limit=None):
+                        self.streams.append(SingleChannelMessageStream(t, *self.__stream_args))
                 except discord.errors.Forbidden:
                     logging.warning(f'No access to thread list for "{stream}", skipping.')
                     continue

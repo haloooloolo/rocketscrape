@@ -169,6 +169,16 @@ class TopContributorAnalysis(MessageAnalysis):
 
 
 class ContributionHistoryAnalysis(TopContributorAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.interval = timedelta(days=args.snapshot_interval)
+
+    @classmethod
+    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+        return TopContributorAnalysis.custom_args() + (
+            CustomOption('snapshot-interval', int, 28, 'time between data snapshots in days'),
+        )
+
     def _prepare(self) -> None:
         super()._prepare()
         self.x = []
@@ -194,17 +204,22 @@ class ContributionHistoryAnalysis(TopContributorAnalysis):
             return
 
         self.__add_snapshot(self.next_date)
-        self.next_date += timedelta(days=28)
+        self.next_date += self.interval
 
     def _finalize(self) -> tuple[list[datetime], dict[int, list[int]]]:
         super()._finalize()
         self.__add_snapshot(self.last_ts)
         return self.x, self.y
 
-    async def present(self, result: tuple[list[datetime], dict[int, list[int]]], client: Client, stream: MessageStream, args) -> None:
+    async def present(self,
+                      result: tuple[list[datetime], dict[int, list[int]]],
+                      client: Client,
+                      stream: MessageStream,
+                      args
+                      ) -> None:
         x, y = result
         for user_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:args.max_results]:
-            plt.plot(x, data, label=await client.get_username(user_id))
+            plt.plot(x, data, label=(await client.get_username(user_id)).encode('ascii', 'ignore').decode('ascii'))
 
         plt.ylabel('time (mins)')
         plt.legend()
@@ -316,11 +331,11 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.__thank_pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
+        self.__pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
 
     def _on_message(self, message: Message) -> None:
         content = message.content.lower()
-        if not self.__thank_pattern.search(content):
+        if not self.__pattern.search(content):
             return
 
         mentions = message.get_mentions()
@@ -345,7 +360,6 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
 
     @classmethod
     def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
-        print(cls.__bases__)
         return CountBasedMessageAnalysis.custom_args() + (
             CustomArgument('react', str, 'emoji to count received reactions for'),
         )

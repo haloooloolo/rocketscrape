@@ -5,9 +5,10 @@ import inspect
 
 from datetime import datetime, timezone
 from enum import IntEnum
+from typing import TypeVar
 
 from client import Client
-from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, Message
+from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
 from analysis import MessageAnalysis, CustomArgument, CustomOption
 
 
@@ -17,11 +18,12 @@ class _EnumArg(IntEnum):
         try:
             return cls[s]
         except KeyError:
-            try:
-                return int(s)
-            except ValueError:
-                raise argparse.ArgumentTypeError(
-                    f"{s!r} is not a valid {cls.__name__.lower()}")
+            pass  # fallback to regular int
+        try:
+            return int(s)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                f"{s!r} is not a valid {cls.__name__.lower()}")
 
     def __str__(self):
         return self.name
@@ -41,19 +43,24 @@ async def main() -> None:
     args.start = args.start.replace(tzinfo=timezone.utc) if args.start else None
     args.end = args.end.replace(tzinfo=timezone.utc) if args.end else None
 
+    common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
-        stream = await ServerMessageStream(client.get_guild(args.server))
+        stream = await ServerMessageStream(client.get_guild(args.server), *common_stream_args)
     elif len(args.channels) > 1:
-        stream = MultiChannelMessageStream(list(map(client.get_channel, args.channels)))
+        stream = MultiChannelMessageStream(
+            list(map(client.get_channel, args.channels)), *common_stream_args)
     else:
-        stream = SingleChannelMessageStream(client.get_channel(args.channels[0]))
+        stream = SingleChannelMessageStream(client.get_channel(args.channels[0]), *common_stream_args)
 
     analysis = args.analysis(stream, args)
     result = await analysis.run(args.start, args.end)
     await analysis.present(result, client, stream, args)
 
 
-def get_subclasses(cls: type) -> set[type]:
+T = TypeVar('T')
+
+
+def get_subclasses(cls: type[T]) -> set[type[T]]:
     classes = [cls]
     i = 0
     while i < len(classes):
@@ -82,13 +89,19 @@ def parse_args():
                         help=f'maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
+    parser.add_argument('--cache-dir', type=str, default='cache',
+                        help='directory to store the message cache in')
+    parser.add_argument('--refresh-window', type=int, default=24,
+                        help='window width in hours in which message data will be refreshed despite being in cache')
+    parser.add_argument('--commit-batch-size', type=int, default=2500,
+                        help='maximum number of new messages that will be committed to disk at once')
 
     def add_custom_arg(_parser, _arg):
         if isinstance(_arg, CustomArgument):
             _parser.add_argument(_arg.name, type=_arg.type, help=_arg.help)
         elif isinstance(_arg, CustomOption):
             _parser.add_argument(f'--{_arg.name}', type=_arg.type,
-                                default=_arg.default,help=_arg.help, required=True)
+                                 default=_arg.default, help=_arg.help)
 
     base_cls = MessageAnalysis
     for arg in base_cls.custom_args():
