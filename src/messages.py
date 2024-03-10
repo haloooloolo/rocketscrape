@@ -1,8 +1,9 @@
 import os
 import copy
-import shutil
 import pickle
 import asyncio
+import logging
+import heapq
 
 import discord
 import tqdm
@@ -31,7 +32,9 @@ class Message:
 
         reactions = [gather_reactions(r) for r in self.__message.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
-            if not isinstance(res, Exception):
+            if isinstance(res, Exception):
+                logging.warning(f'Encountered exception while requesting message reaction: {res}')
+            else:
                 emoji, users = res
                 self.reactions[emoji] = users
 
@@ -51,6 +54,9 @@ class Message:
 
     def __eq__(self, other) -> bool:
         return self.id == other.id
+
+    def __lt__(self, other) -> bool:
+        return self.time < other.time
 
     def __repr__(self) -> str:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
@@ -98,9 +104,6 @@ class SingleChannelMessageStream:
         except (FileNotFoundError, EOFError):
             self.segments = []
 
-    def __repr__(self) -> str:
-        return '# ' + str(self.channel)
-
     def __load(self) -> list[_CacheSegment]:
         path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
         with open(path, 'rb') as file:
@@ -110,7 +113,7 @@ class SingleChannelMessageStream:
         if not end and not self.uncommitted_messages:
             return
 
-        print(f'saving {len(self.uncommitted_messages)} new messages from {self} to disk...')
+        logging.info(f'saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
 
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
         end = end or self.uncommitted_messages[-1].time
@@ -162,11 +165,12 @@ class SingleChannelMessageStream:
             # fill gap between last retrieved message and start of this interval
             async for m in self.channel.history(limit=None, after=last_timestamp, before=segment.start, oldest_first=True):
                 message = await Message(m)
+                process_message(message)
+
                 if end and message.time > end:
                     self.__commit(start, end)
                     return
 
-                process_message(message)
                 yield message
 
             for message in segment.messages:
@@ -187,7 +191,11 @@ class SingleChannelMessageStream:
 
             self.__commit(start, end)
         except discord.Forbidden:
+            logging.warning(f'No access to messages in "{self}", ending stream.')
             return
+
+    def __repr__(self) -> str:
+        return '# ' + str(self.channel)
 
 
 class MultiChannelMessageStream(MessageStream):
@@ -195,24 +203,23 @@ class MultiChannelMessageStream(MessageStream):
         self.streams = [SingleChannelMessageStream(channel) for channel in channels]
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
-        print('Fetching channel stream heads...')
-        heads = {}
+        logging.info('Fetching channel stream heads...')
+        heads = []
 
         for stream in tqdm.tqdm(self.streams):
             iterator = stream.get_history(start, end)
             if head := await anext(iterator, None):
-                heads[iterator] = head
+                heads.append((head, iterator))
+
+        heapq.heapify(heads)
 
         while heads:
-            candidate = None
-            for iterator, head in heads.items():
-                if (not candidate) or (head.time < heads[candidate].time):
-                    candidate = iterator
-
-            yield heads[candidate]
-            heads[candidate] = await anext(candidate, None)
-            if not heads[candidate]:
-                del heads[candidate]
+            head, iterator = heapq.heappop(heads)
+            yield head
+            if head := await anext(iterator, None):
+                heapq.heappush(heads, (head, iterator))
+            else:
+                logging.info(f'End of channel stream, {len(heads)} left.')
 
     def __repr__(self) -> str:
         return f'({", ".join([str(c) for c in self.streams])})'
@@ -226,13 +233,14 @@ class ServerMessageStream(MultiChannelMessageStream):
         self.__repr = str(guild)
 
     async def __async_init(self) -> 'ServerMessageStream':
-        print('Fetching archived threads...')
+        logging.info('Fetching archived threads...')
         for stream in self.streams:
             if isinstance(stream.channel, discord.TextChannel):
                 try:
                     archived_threads = stream.channel.archived_threads(limit=None)
                     self.streams.extend([SingleChannelMessageStream(t) async for t in archived_threads])
                 except discord.errors.Forbidden:
+                    logging.warning(f'No access to thread list for "{stream}", skipping.')
                     continue
 
         return self
