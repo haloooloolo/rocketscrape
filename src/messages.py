@@ -9,11 +9,9 @@ import discord
 import tqdm
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, Sequence
+from typing import Optional, AsyncIterator, Sequence, Any
 from datetime import datetime, timezone
 from dataclasses import dataclass
-
-CACHE_DIR = 'cache'
 
 
 @dataclass
@@ -43,12 +41,12 @@ class Message:
     def __await__(self):
         return self.__async_init().__await__()
 
-    def __getstate__(self):
+    def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
         del state['_Message__message']
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         self.__dict__.update(state)
         self.__message = None
 
@@ -61,7 +59,7 @@ class Message:
     def __repr__(self) -> str:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return self.id
 
 
@@ -95,17 +93,18 @@ class MessageStream(ABC):
         pass
 
 
-class SingleChannelMessageStream:
-    def __init__(self, channel: discord.TextChannel | discord.Thread) -> None:
+class SingleChannelMessageStream(MessageStream):
+    def __init__(self, channel: discord.TextChannel | discord.Thread, cache_dir='cache') -> None:
         self.channel = channel
         self.uncommitted_messages = []
+        self.cache_dir = cache_dir
         try:
             self.segments = self.__load()
         except (FileNotFoundError, EOFError):
             self.segments = []
 
     def __load(self) -> list[_CacheSegment]:
-        path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
+        path = os.path.join(self.cache_dir, f'{self.channel.id}.pkl')
         with open(path, 'rb') as file:
             return pickle.load(file)
 
@@ -137,8 +136,8 @@ class SingleChannelMessageStream:
         else:
             self.segments.append(new_segment)
 
-        os.makedirs(CACHE_DIR, exist_ok=True)
-        path = os.path.join(CACHE_DIR, f'{self.channel.id}.pkl')
+        os.makedirs(self.cache_dir, exist_ok=True)
+        path = os.path.join(self.cache_dir, f'{self.channel.id}.pkl')
 
         with open(path, 'wb') as file:
             pickle.dump(self.segments, file)
