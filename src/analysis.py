@@ -65,6 +65,10 @@ class MessageAnalysis(ABC):
     def subcommand() -> str:
         pass
 
+    @staticmethod
+    def custom_args() -> dict[str, tuple[type, str]]:
+        return {}
+
 
 class CountBasedMessageAnalysis(MessageAnalysis):
     def _prepare(self) -> None:
@@ -254,7 +258,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         return 'missing-persons'
 
 
-class ReactionGivenAnalysis(CountBasedMessageAnalysis):
+class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             for user_id in users:
@@ -265,10 +269,10 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 
     @staticmethod
     def subcommand() -> str:
-        return 'reactions-given'
+        return 'total-reactions-given'
 
 
-class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
+class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             self.count[message.author_id] = self.count.get(message.author_id, 0) + len(users)
@@ -278,7 +282,8 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
 
     @staticmethod
     def subcommand() -> str:
-        return 'reactions-received'
+        return 'total-reactions-received'
+
 
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, log_interval=timedelta(seconds=1)):
@@ -303,3 +308,24 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'thank-count'
+
+
+class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
+    def __init__(self, stream: MessageStream, emoji: str, log_interval=1):
+        super().__init__(stream, log_interval)
+        self.emoji = emoji
+
+    def _on_message(self, message: Message) -> None:
+        for user in message.reactions.get('🔨', []):
+            self.count[user] = self.count.get(user, 0) + 1
+
+    def _title(self, stream_name: str, range_str: str) -> str:
+        return f'{stream_name} members by 🔨 given {range_str}'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'single-reaction-received'
+
+    @staticmethod
+    def custom_args() -> dict[str, tuple[type, str]]:
+        return {'react': (str, 'emoji to count received reactions for')}

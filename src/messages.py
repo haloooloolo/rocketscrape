@@ -202,7 +202,7 @@ class SingleChannelMessageStream(MessageStream):
 
             if not from_cache:
                 self.uncommitted_messages.append(_message)
-            elif (now - _message.time) < timedelta(hours=1):
+            elif (now - _message.time) < timedelta(hours=24):
                 await message.refresh(self.channel)
                 self.uncommitted_messages.append(_message)
 
