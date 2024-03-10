@@ -52,7 +52,7 @@ def parse_args():
     parser.add_argument('-c', '--channel', type=Channel.argtype, choices=Channel, default=Channel.support)
     parser.add_argument('-s', '--start', type=datetime.fromisoformat)
     parser.add_argument('-e', '--end', type=datetime.fromisoformat)
-    parser.add_argument('--max-results', type=int, default=10)
+    parser.add_argument('-r', '--max-results', type=int, default=10)
     return parser.parse_args()
 
 
