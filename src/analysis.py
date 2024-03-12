@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
-from typing import Optional, Any, Generic, TypeVar
+from typing import Optional, Any, Generic, TypeVar, Union
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
@@ -28,6 +28,9 @@ class CustomOption:
     type: type[Any]
     default: Any
     help: Optional[str] = None
+
+
+ArgType = Union[CustomArgument, CustomOption]
 
 
 @dataclass
@@ -92,7 +95,7 @@ class MessageAnalysis(ABC):
         pass
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[Union[CustomArgument, CustomOption], ...]:
         return ()
 
 
@@ -128,7 +131,7 @@ class TopContributorAnalysis(MessageAnalysis):
         self.session_timeout = args.session_timeout
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return MessageAnalysis.custom_args() + (
             CustomOption('base-session-time', int, 5),
             CustomOption('session-timeout', int, 15)
@@ -186,7 +189,7 @@ class ContributorHistoryAnalysis(MessageAnalysis):
         self.interval = timedelta(days=args.snapshot_interval)
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return TopContributorAnalysis.custom_args() + (
             CustomOption('snapshot-interval', int, 28, 'time between data snapshots in days'),
         )
@@ -274,7 +277,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         self.inactivity_threshold = timedelta(days=args.inactivity_threshold)
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return TopContributorAnalysis.custom_args() + (
             CustomOption('inactivity_threshold', int, 90,
                          'number of days without activity required to be considered inactive'),
@@ -372,7 +375,7 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
         self.emoji = args.react
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return CountBasedMessageAnalysis.custom_args() + (
             CustomArgument('react', str, 'emoji to count received reactions for'),
         )
@@ -396,7 +399,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
         self.emoji = args.react
 
     @classmethod
-    def custom_args(cls) -> tuple[CustomArgument | CustomOption, ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return CountBasedMessageAnalysis.custom_args() + (
             CustomArgument('react', str, 'emoji to count given reactions for'),
         )

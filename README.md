@@ -4,8 +4,7 @@ RocketScrape is a command line tool to process Discord message streams.
 
 ## Setup
 
-To get started, make sure you have Python 3.11 or later installed. RocketScrape can be installed 
-using setuptools by running:
+To get started, install the `rocketscrape` package using:
 ```bash
 pip install -e .
 ```
@@ -24,7 +23,7 @@ Below are examples of how to use RocketScrape:
 rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] ANALYSIS 
 ```
 Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel ID or one of the predefined channel names from 
-the Channel enum in [rocketscrape.py](src/rocketscrape.py). Similarly, you can run it on an entire server using:
+the `Channel` enum in [rocketscrape.py](src/rocketscrape.py). Similarly, you can run it on an entire server using:
 ```bash
 rocketscrape --server SERVER ANALYSIS 
 ```

@@ -11,9 +11,11 @@ import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, Iterable, Any
+from typing import Optional, AsyncIterator, Iterable, Any, Union
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
+
+ChannelType = Union[discord.TextChannel, discord.Thread]
 
 
 @dataclass
@@ -55,7 +57,7 @@ class Message:
 
         return self
 
-    async def refresh(self, channel: discord.TextChannel | discord.Thread) -> None:
+    async def refresh(self, channel: ChannelType) -> None:
         try:
             message = await channel.get_partial_message(self.id).fetch()
             self.__setstate__((await Message(message)).__getstate__())
@@ -138,7 +140,7 @@ class MessageStream(ABC):
 
 class SingleChannelMessageStream(MessageStream):
     def __init__(self,
-                 channel: discord.TextChannel | discord.Thread,
+                 channel: ChannelType,
                  cache_dir: str,
                  refresh_window: int,
                  commit_batch_size: int) -> None:
@@ -270,7 +272,7 @@ class SingleChannelMessageStream(MessageStream):
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: Iterable[discord.TextChannel | discord.Thread], *args) -> None:
+    def __init__(self, channels: Iterable[ChannelType], *args) -> None:
         self.streams = [SingleChannelMessageStream(channel, *args) for channel in channels]
 
     def _get_message(self, message_id: int) -> Optional[Message]:
