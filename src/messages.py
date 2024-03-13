@@ -43,9 +43,6 @@ class Message:
         async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[int]]:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
-        if self.reactions:
-            self.reactions.clear()
-
         assert self.__message is not None
         reactions = [gather_reactions(r) for r in self.__message.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
@@ -86,9 +83,6 @@ class Message:
     def __lt__(self, other) -> bool:
         return self.time < other.time
 
-    def __gt__(self, other) -> bool:
-        return self.time > other.time
-
     def __repr__(self) -> str:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
@@ -108,7 +102,7 @@ class _CacheSegment:
 
         other_messages = sum([list(o.messages.values()) for o in others], [])[::-1]
         self_messages = list(self.messages.values())[::-1]
-        self.messages = {}
+        self.messages.clear()
 
         while self_messages or other_messages:
             if (not self_messages) or (other_messages and (other_messages[-1].time <= self_messages[-1].time)):
@@ -227,7 +221,7 @@ class SingleChannelMessageStream(MessageStream):
                 self.uncommitted_messages[_message.id] = _message
 
             if len(self.uncommitted_messages) >= self.commit_batch_size:
-                self.__commit(start, last_timestamp)
+                self.__commit(start, _message.time)
 
         for segment in copy.copy(self.segments):
             # segment ahead of requested interval, skip
@@ -235,20 +229,20 @@ class SingleChannelMessageStream(MessageStream):
                 continue
 
             # fill gap between last retrieved message and start of this interval
-            async for m in self.channel.history(limit=None, after=last_timestamp,
-                                                before=segment.start, oldest_first=True):
-                message = await Message(m)
+            async for d_msg in self.channel.history(limit=None, after=last_timestamp,
+                                                    before=segment.start, oldest_first=True):
+                message = await Message(d_msg)
                 await handle_message(message)
 
                 if end and message.time > end:
-                    self.__commit(start, end)
+                    self.__commit(start, message.time)
                     return
 
                 yield message
 
             for message in segment.messages.values():
                 if end and message.time > end:
-                    self.__commit(start, end)
+                    self.__commit(start, message.time)
                     return 
 
                 if (start is None) or (message.time >= start):
@@ -257,8 +251,8 @@ class SingleChannelMessageStream(MessageStream):
 
         try:
             # fill gap between last segment end of requested interval
-            async for m in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
-                message = await Message(m)
+            async for d_msg in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
+                message = await Message(d_msg)
                 await handle_message(message)
                 yield message
 
