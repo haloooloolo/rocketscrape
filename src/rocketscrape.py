@@ -46,7 +46,7 @@ class Channel(_EnumArg):
 
 
 def main():
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.DEBUG)
     Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
 
 

@@ -153,7 +153,7 @@ class SingleChannelMessageStream(MessageStream):
         with open(path, 'rb') as file:
             return pickle.load(file)
 
-    def __commit(self, start: Optional[datetime], end: Optional[datetime]) -> None:
+    def __commit(self, start: Optional[datetime], end: datetime) -> None:
         if self.uncommitted_messages:
             logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
 
@@ -161,13 +161,6 @@ class SingleChannelMessageStream(MessageStream):
         logging.debug(str(self.segments))
 
         start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
-        if not end:
-            if self.segments:
-                end = next(reversed(self.segments[-1].messages.values())).time
-            elif self.uncommitted_messages:
-                end = next(reversed(self.uncommitted_messages.values())).time
-            else:
-                return
         low, high, successor = None, None, None
 
         for segment_nr, segment in enumerate(self.segments):
@@ -256,7 +249,11 @@ class SingleChannelMessageStream(MessageStream):
                 await handle_message(message)
                 yield message
 
-            self.__commit(start, end)
+            if last_timestamp is not None:
+                if end and end < datetime.now(timezone.utc):
+                    self.__commit(start, end)
+                else:
+                    self.__commit(start, last_timestamp)
         except discord.Forbidden:
             logging.warning(f'No access to messages in "{self}", ending stream.')
             return
