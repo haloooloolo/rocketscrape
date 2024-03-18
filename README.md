@@ -1,10 +1,10 @@
 # RocketScrape
 
-RocketScrape is a command line tool to process Discord message streams.
+A command line tool to process Discord message streams.
 
 ## Setup
 
-To get started, install the `rocketscrape` package using:
+To get started, install the `rocketscrape` Python package from within the directory using:
 ```bash
 pip install -e .
 ```
