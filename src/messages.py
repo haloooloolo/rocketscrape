@@ -59,7 +59,7 @@ class Message:
             message = await channel.get_partial_message(self.id).fetch()
             self.__setstate__((await Message(message)).__getstate__())
         except discord.NotFound:
-            logging.warning(f'Failed to refresh message, ID {self.id} no longer exists.')
+            logging.warning(f'Failed to refresh message, ID {self.id} no longer exists')
 
     def get_mentions(self) -> set[int]:
         matches = Message.__mention_pattern.findall(self.content)
@@ -155,7 +155,7 @@ class SingleChannelMessageStream(MessageStream):
 
     def __commit(self, start: Optional[datetime], end: datetime) -> None:
         if self.uncommitted_messages:
-            logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk...')
+            logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk')
 
         logging.debug(f'start: {start}, end: {end}')
         logging.debug(str(self.segments))
@@ -255,7 +255,7 @@ class SingleChannelMessageStream(MessageStream):
                 else:
                     self.__commit(start, last_timestamp)
         except discord.Forbidden:
-            logging.warning(f'No access to messages in "{self}", ending stream.')
+            logging.warning(f'No access to messages in "{self}", ending stream')
             return
 
     def __repr__(self) -> str:
@@ -274,7 +274,7 @@ class MultiChannelMessageStream(MessageStream):
         return None
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
-        logging.info('Fetching channel stream heads...')
+        logging.info('Fetching channel stream heads')
         heads = []
 
         with logging_redirect_tqdm():
@@ -291,7 +291,7 @@ class MultiChannelMessageStream(MessageStream):
             if head := await anext(iterator, None):
                 heapq.heappush(heads, (head, iterator))
             else:
-                logging.info(f'End of channel stream, {len(heads)} left.')
+                logging.info(f'End of channel stream, {len(heads)} left')
 
     def __repr__(self) -> str:
         return f'({", ".join([str(c) for c in self.streams])})'
@@ -305,14 +305,14 @@ class ServerMessageStream(MultiChannelMessageStream):
         self.__repr = str(guild)
 
     async def __async_init(self) -> 'ServerMessageStream':
-        logging.info('Fetching archived threads...')
+        logging.info('Fetching archived threads')
         for stream in self.streams:
             if isinstance(stream.channel, discord.TextChannel):
                 try:
                     async for t in stream.channel.archived_threads(limit=None):
                         self.streams.append(SingleChannelMessageStream(t, *self.__stream_args))
                 except discord.errors.Forbidden:
-                    logging.warning(f'No access to thread list for "{stream}", skipping.')
+                    logging.warning(f'No access to thread list for "{stream}", skipping')
                     continue
 
         return self

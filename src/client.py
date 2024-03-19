@@ -14,6 +14,7 @@ class Client(discord.Client):
 
     async def on_ready(self) -> None:
         if not self.__lock.acquire(blocking=False):
+            logging.info(f'Back online')
             return
 
         logging.info(f'Logged in as {self.user}')
