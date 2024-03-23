@@ -3,6 +3,7 @@ import argparse
 import logging
 import inspect
 import pathlib
+import sys
 
 from datetime import datetime, timezone
 from enum import IntEnum
@@ -12,7 +13,7 @@ import discord
 
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
-from analysis import MessageAnalysis, CustomArgument, CustomOption
+from analysis import MessageAnalysis
 
 
 T = TypeVar('T')
@@ -77,9 +78,13 @@ async def _main(client) -> int:
         else:
             stream = SingleChannelMessageStream(channels[0], *common_stream_args)
 
-    analysis = args.analysis(stream, args)
-    result = await analysis.run(args.start, args.end)
-    await analysis.display_result(result, client, args.max_results)
+    try:
+        analysis = args.analysis(stream, args)
+        result = await analysis.run(args.start, args.end)
+        await analysis.display_result(result, client, args.max_results)
+    except Exception as exc:
+        logging.exception(str(exc))
+        return 1
 
     return 0
 

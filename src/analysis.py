@@ -414,3 +414,59 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'reaction-given-count'
+
+
+class ActivityTimeAnalyis(MessageAnalysis):
+    def __init__(self, stream, args):
+        super().__init__(stream, args)
+        self.user: int = args.user
+        self.num_buckets = args.num_buckets
+        assert (24 * 60 % self.num_buckets) == 0, \
+            'bucket count doesn\'t cleanly divide into minutes'
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return MessageAnalysis.custom_args() + (
+            CustomArgument('user', int),
+            CustomOption('num-buckets', int, 24),
+        )
+
+    def _prepare(self) -> None:
+        self.buckets = [0] * self.num_buckets
+
+    def _on_message(self, message: Message) -> None:
+        if message.author_id == self.user:
+            timestamp = message.time.astimezone()
+            bucket = int((60 * timestamp.hour + timestamp.minute) / (24 * 60 / self.num_buckets))
+            self.buckets[bucket] += 1
+
+    def _finalize(self) -> tuple[int, ...]:
+        return tuple(self.buckets)
+
+    async def display_result(self, result: Result[tuple[int, ...]], client: Client, max_results: int) -> None:
+        x = list(range(self.num_buckets))
+
+        labels = []
+        bucket_width = int(24 * 60 / self.num_buckets)
+        for i in x:
+            start = i * bucket_width
+            end = start + bucket_width - 1
+            start_fmt = f'{(start // 60):02}:{(start % 60):02}'
+            end_fmt = f'{(end // 60):02}:{(end % 60):02}'
+            labels.append(f'{start_fmt} - {end_fmt}')
+
+        plt.xticks(x, labels, rotation=90)
+        plt.xlim(-1, self.num_buckets)
+        plt.ylabel('message count')
+        plt.bar(x, result.data)
+        plt.subplots_adjust(bottom=0.25)
+
+        username = await client.get_username(self.user)
+        title = f'{username} message activity in {self.stream} by local time'
+        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'message-time-histogram'

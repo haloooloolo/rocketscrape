@@ -307,13 +307,13 @@ class ServerMessageStream(MultiChannelMessageStream):
     async def __async_init(self) -> 'ServerMessageStream':
         logging.info('Fetching archived threads')
         for stream in self.streams:
-            if isinstance(stream.channel, discord.TextChannel):
-                try:
-                    async for t in stream.channel.archived_threads(limit=None):
-                        self.streams.append(SingleChannelMessageStream(t, *self.__stream_args))
-                except discord.errors.Forbidden:
-                    logging.warning(f'No access to thread list for "{stream}", skipping')
-                    continue
+            if not isinstance(stream.channel, discord.TextChannel):
+                continue
+            try:
+                async for t in stream.channel.archived_threads(limit=None):
+                    self.streams.append(SingleChannelMessageStream(t, *self.__stream_args))
+            except discord.errors.Forbidden:
+                logging.warning(f'No access to thread list for "{stream}", skipping')
 
         return self
 
