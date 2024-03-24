@@ -11,7 +11,7 @@ import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, Iterable, Any, Union
+from typing import Optional, AsyncIterator, Iterable, Union
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
@@ -22,60 +22,53 @@ ChannelType = Union[discord.TextChannel, discord.Thread]
 class Message:
     __mention_pattern = re.compile('(?<=<@)[0-9]{18}(?=>)')
 
-    def __init__(self, message: discord.Message) -> None:
-        self.id: int = message.id
-        self.time: datetime = message.created_at
-        self.author_id: int = message.author.id
-        self.content: str = message.content
-        self.reference: Optional[int] = message.reference.message_id if message.reference else None
-        self.attachments: list[str] = [a.content_type for a in message.attachments if a.content_type]
+    def __init__(self, d_msg: discord.Message) -> None:
+        self.id: int = d_msg.id
+        self.time: datetime = d_msg.created_at
+        self.author_id: int = d_msg.author.id
+        self.content: str = d_msg.content
+        self.reference: Optional[int] = d_msg.reference.message_id if d_msg.reference else None
+        self.attachments: list[str] = [a.content_type for a in d_msg.attachments if a.content_type]
         self.embeds: dict[str, list[str]] = {}
-        self.reactions: dict[str, set[int]] = {}
-        self.__message: Optional[discord.Message] = message
+        self._reactions: Optional[dict[str, set[int]]] = None
 
-        for embed in message.embeds:
+        for embed in d_msg.embeds:
             if embed.type and embed.url:
                 if embed.type not in self.embeds:
                     self.embeds[embed.type] = []
                 self.embeds[embed.type].append(embed.url)
 
-    async def __async_init(self) -> 'Message':
+    @property
+    def reactions(self) -> dict[str, set[int]]:
+        return self._reactions or {}
+
+    async def _fetch_reactions(self, d_msg: discord.Message) -> None:
+        self._reactions = {}
+
         async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[int]]:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
-        assert self.__message is not None
-        reactions = [gather_reactions(r) for r in self.__message.reactions]
+        reactions = [gather_reactions(r) for r in d_msg.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
             if isinstance(res, BaseException):
                 logging.warning(f'Encountered exception while requesting message reaction: {res}')
             else:
                 emoji, users = res
-                self.reactions[emoji] = users
+                self._reactions[emoji] = users
 
-        return self
-
-    async def refresh(self, channel: ChannelType) -> None:
+    async def refresh(self, channel: ChannelType) -> Optional[discord.Message]:
         try:
-            message = await channel.get_partial_message(self.id).fetch()
-            self.__setstate__((await Message(message)).__getstate__())
+            d_msg = await channel.get_partial_message(self.id).fetch()
+            self.__dict__.update((Message(d_msg)).__dict__)
+            return d_msg
         except discord.NotFound:
             logging.warning(f'Failed to refresh message, ID {self.id} no longer exists')
+            return None
 
-    def get_mentions(self) -> set[int]:
+    @property
+    def mentions(self) -> set[int]:
         matches = Message.__mention_pattern.findall(self.content)
         return {int(match) for match in matches}
-
-    def __await__(self):
-        return self.__async_init().__await__()
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        del state['_Message__message']
-        return state
-
-    def __setstate__(self, state) -> None:
-        self.__dict__.update(state)
-        self.__message = None
 
     def __eq__(self, other) -> bool:
         return self.id == other.id
@@ -102,7 +95,7 @@ class _CacheSegment:
 
         other_messages = sum([list(o.messages.values()) for o in others], [])[::-1]
         self_messages = list(self.messages.values())[::-1]
-        self.messages.clear()
+        self.messages = {}
 
         while self_messages or other_messages:
             if (not self_messages) or (other_messages and (other_messages[-1].time <= self_messages[-1].time)):
@@ -128,7 +121,8 @@ class MessageStream(ABC):
         pass
 
     @abstractmethod
-    def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
+    def get_history(self, start: Optional[datetime], end: Optional[datetime],
+                    include_reactions=True) -> AsyncIterator[Message]:
         pass
 
 
@@ -171,7 +165,7 @@ class SingleChannelMessageStream(MessageStream):
                 high = segment_nr
 
         logging.debug(f'l: {low}, h: {high}, s: {successor}')
-        new_segment = _CacheSegment(start, end, copy.copy(self.uncommitted_messages))
+        new_segment = _CacheSegment(start, end, self.uncommitted_messages)
         self.uncommitted_messages.clear()
 
         if (low is not None) and (high is not None):
@@ -199,22 +193,35 @@ class SingleChannelMessageStream(MessageStream):
 
         return None
 
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime],
+                          include_reactions=True) -> AsyncIterator[Message]:
         last_timestamp = start
 
-        async def handle_message(_message: Message, from_cache=False) -> None:
+        async def handle_message(_message: Union[Message, discord.Message]) -> Message:
+            _d_msg: Optional[discord.Message] = None
+
+            if isinstance(_message, discord.Message):
+                _d_msg = _message
+                _message = Message(_d_msg)
+                self.uncommitted_messages[_message.id] = _message
+            else:
+                now = datetime.now(timezone.utc)
+                is_stale = (now - _message.time) <= self.refresh_window
+                missing_reactions = (_message._reactions is None) and include_reactions
+                if is_stale or missing_reactions:
+                    _d_msg = await _message.refresh(self.channel)
+                    self.uncommitted_messages[_message.id] = _message
+
+            if _d_msg and include_reactions:
+                await _message._fetch_reactions(_d_msg)
+
             nonlocal last_timestamp
             last_timestamp = _message.time
-            now = datetime.now(timezone.utc)
-
-            if not from_cache:
-                self.uncommitted_messages[_message.id] = _message
-            elif (now - _message.time) <= self.refresh_window:
-                await _message.refresh(self.channel)
-                self.uncommitted_messages[_message.id] = _message
 
             if len(self.uncommitted_messages) >= self.commit_batch_size:
                 self.__commit(start, _message.time)
+
+            return _message
 
         for segment in copy.copy(self.segments):
             # segment ahead of requested interval, skip
@@ -224,9 +231,7 @@ class SingleChannelMessageStream(MessageStream):
             # fill gap between last retrieved message and start of this interval
             async for d_msg in self.channel.history(limit=None, after=last_timestamp,
                                                     before=segment.start, oldest_first=True):
-                message = await Message(d_msg)
-                await handle_message(message)
-
+                message = await handle_message(d_msg)
                 if end and message.time > end:
                     self.__commit(start, message.time)
                     return
@@ -236,18 +241,15 @@ class SingleChannelMessageStream(MessageStream):
             for message in segment.messages.values():
                 if end and message.time > end:
                     self.__commit(start, message.time)
-                    return 
+                    return
 
                 if (start is None) or (message.time >= start):
-                    await handle_message(message, from_cache=True)
-                    yield message
+                    yield await handle_message(message)
 
         try:
             # fill gap between last segment end of requested interval
             async for d_msg in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
-                message = await Message(d_msg)
-                await handle_message(message)
-                yield message
+                yield await handle_message(d_msg)
 
             if last_timestamp is not None:
                 if end and end < datetime.now(timezone.utc):
@@ -273,13 +275,14 @@ class MultiChannelMessageStream(MessageStream):
 
         return None
 
-    async def get_history(self, start: Optional[datetime], end: Optional[datetime]) -> AsyncIterator[Message]:
+    async def get_history(self, start: Optional[datetime], end: Optional[datetime],
+                          include_reactions=True) -> AsyncIterator[Message]:
         logging.info('Fetching channel stream heads')
         heads = []
 
         with logging_redirect_tqdm():
             for stream in tqdm.tqdm(self.streams):
-                iterator = stream.get_history(start, end)
+                iterator = stream.get_history(start, end, include_reactions)
                 if head := await anext(iterator, None):
                     heads.append((head, iterator))
 

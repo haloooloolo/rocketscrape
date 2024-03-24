@@ -41,16 +41,17 @@ class Result(Generic[T]):
 
 
 class MessageAnalysis(ABC):
-    def __init__(self, stream: MessageStream, args):
+    def __init__(self, stream: MessageStream, args, require_reactions):
         self.log_interval = timedelta(seconds=args.log_interval)
         self.stream = stream
+        self.require_reactions = require_reactions
 
     async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
 
-        async for message in self.stream.get_history(start, end):
+        async for message in self.stream.get_history(start, end, self.require_reactions):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
                 logging.info(f'Message stream reached {message.time}')
@@ -126,7 +127,7 @@ class CountBasedMessageAnalysis(MessageAnalysis):
 
 class TopContributorAnalysis(MessageAnalysis):
     def __init__(self, stream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=False)
         self.base_session_time = args.base_session_time
         self.session_timeout = args.session_timeout
 
@@ -184,7 +185,7 @@ class TopContributorAnalysis(MessageAnalysis):
 
 class ContributorHistoryAnalysis(MessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=False)
         self.__contributor_analysis = TopContributorAnalysis(stream, args)
         self.interval = timedelta(days=args.snapshot_interval)
 
@@ -318,6 +319,9 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
 
 class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args, require_reactions=True)
+
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             for user_id in users:
@@ -332,6 +336,9 @@ class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
 
 
 class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args, require_reactions=True)
+
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             self.count[message.author_id] = self.count.get(message.author_id, 0) + len(users)
@@ -346,7 +353,7 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
 
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=False)
         self.__pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
 
     def _on_message(self, message: Message) -> None:
@@ -354,7 +361,7 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
         if not self.__pattern.search(content):
             return
 
-        mentions = message.get_mentions()
+        mentions = message.mentions
         if replied_to := self.stream.get_message(message.reference):
             mentions.add(replied_to.author_id)
 
@@ -371,7 +378,7 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
 
 class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=True)
         self.emoji = args.react
 
     @classmethod
@@ -395,7 +402,7 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
 
 class ReactionGivenAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=True)
         self.emoji = args.react
 
     @classmethod
@@ -418,7 +425,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 
 class ActivityTimeAnalyis(MessageAnalysis):
     def __init__(self, stream, args):
-        super().__init__(stream, args)
+        super().__init__(stream, args, require_reactions=False)
         self.user: int = args.user
         self.num_buckets = args.num_buckets
         assert (24 * 60 % self.num_buckets) == 0, \
