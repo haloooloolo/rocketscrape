@@ -41,17 +41,16 @@ class Result(Generic[T]):
 
 
 class MessageAnalysis(ABC):
-    def __init__(self, stream: MessageStream, args, require_reactions):
+    def __init__(self, stream: MessageStream, args):
         self.log_interval = timedelta(seconds=args.log_interval)
         self.stream = stream
-        self.require_reactions = require_reactions
 
     async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
 
-        async for message in self.stream.get_history(start, end, self.require_reactions):
+        async for message in self.stream.get_history(start, end, self._require_reactions):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
                 logging.info(f'Message stream reached {message.time}')
@@ -60,6 +59,11 @@ class MessageAnalysis(ABC):
             self._on_message(message)
 
         return Result(start, end, self._finalize())
+
+    @property
+    @abstractmethod
+    def _require_reactions(self) -> bool:
+        pass
 
     @abstractmethod
     def _prepare(self) -> None:
@@ -127,7 +131,7 @@ class CountBasedMessageAnalysis(MessageAnalysis):
 
 class TopContributorAnalysis(MessageAnalysis):
     def __init__(self, stream, args):
-        super().__init__(stream, args, require_reactions=False)
+        super().__init__(stream, args)
         self.base_session_time = args.base_session_time
         self.session_timeout = args.session_timeout
 
@@ -137,6 +141,10 @@ class TopContributorAnalysis(MessageAnalysis):
             CustomOption('base-session-time', int, 5),
             CustomOption('session-timeout', int, 15)
         )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     @staticmethod
     def __to_minutes(td: timedelta) -> float:
@@ -185,7 +193,7 @@ class TopContributorAnalysis(MessageAnalysis):
 
 class ContributorHistoryAnalysis(MessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=False)
+        super().__init__(stream, args)
         self.__contributor_analysis = TopContributorAnalysis(stream, args)
         self.interval = timedelta(days=args.snapshot_interval)
 
@@ -194,6 +202,10 @@ class ContributorHistoryAnalysis(MessageAnalysis):
         return TopContributorAnalysis.custom_args() + (
             CustomOption('snapshot-interval', int, 28, 'time between data snapshots in days'),
         )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     def _prepare(self) -> None:
         self.__contributor_analysis._prepare()
@@ -250,6 +262,10 @@ class MessageCountAnalysis(CountBasedMessageAnalysis):
     def _on_message(self, message: Message) -> None:
         self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
 
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
     def _title(self) -> str:
         return f'Top {self.stream} contributors by message count'
 
@@ -263,6 +279,10 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
         for emoji_name, users in message.reactions.items():
             if ('kek' in emoji_name) and (message.author_id in users):
                 self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     def _title(self) -> str:
         return f'Top {self.stream} self kek offenders'
@@ -283,6 +303,10 @@ class MissingPersonAnalysis(TopContributorAnalysis):
             CustomOption('inactivity_threshold', int, 90,
                          'number of days without activity required to be considered inactive'),
         )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     def _prepare(self) -> None:
         super()._prepare()
@@ -319,8 +343,9 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
 
 class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
-    def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=True)
+    @property
+    def _require_reactions(self) -> bool:
+        return True
 
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
@@ -336,8 +361,9 @@ class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
 
 
 class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
-    def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=True)
+    @property
+    def _require_reactions(self) -> bool:
+        return True
 
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
@@ -353,8 +379,12 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
 
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=False)
+        super().__init__(stream, args)
         self.__pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     def _on_message(self, message: Message) -> None:
         content = message.content.lower()
@@ -378,8 +408,12 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
 
 class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=True)
+        super().__init__(stream, args)
         self.emoji = args.react
+
+    @property
+    def _require_reactions(self) -> bool:
+        return True
 
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
@@ -402,7 +436,7 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
 
 class ReactionGivenAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args, require_reactions=True)
+        super().__init__(stream, args)
         self.emoji = args.react
 
     @classmethod
@@ -410,6 +444,10 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
         return CountBasedMessageAnalysis.custom_args() + (
             CustomArgument('react', str, 'emoji to count given reactions for'),
         )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return True
 
     def _on_message(self, message: Message) -> None:
         for user in message.reactions.get(self.emoji, []):
@@ -425,7 +463,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 
 class ActivityTimeAnalyis(MessageAnalysis):
     def __init__(self, stream, args):
-        super().__init__(stream, args, require_reactions=False)
+        super().__init__(stream, args)
         self.user: int = args.user
         self.num_buckets = args.num_buckets
         assert (24 * 60 % self.num_buckets) == 0, \
@@ -437,6 +475,10 @@ class ActivityTimeAnalyis(MessageAnalysis):
             CustomArgument('user', int),
             CustomOption('num-buckets', int, 24),
         )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     def _prepare(self) -> None:
         self.buckets = [0] * self.num_buckets

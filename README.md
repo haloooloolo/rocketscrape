@@ -43,7 +43,7 @@ rocketscrape contributor-history -h
 ```
 
 ## Adding a custom analysis class
-Each analysis type in RocketScrape is implemented as a subclass of `MessageAnalysis`. These classes are required to 
-implement `_prepare(self)`, `_on_message(self, message)`, `_finalize(self)`,
+Each analysis type in RocketScrape is implemented as a subclass of `MessageAnalysis`. These classes are required to
+implement `_require_reactions(self)`, `_prepare(self)`, `_on_message(self, message)`, `_finalize(self)`,
 `display_result(self, result, client, max_results)` and `subcommand()`. Optionally, `custom_args(cls)` can be overridden
-to specify analysis-specific command line arguments. Examples can be found in [analysis.py](src/analysis.py).
+to add analysis-specific command line arguments. Examples can be found in [analysis.py](src/analysis.py).
