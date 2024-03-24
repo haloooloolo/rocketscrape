@@ -3,7 +3,6 @@ import argparse
 import logging
 import inspect
 import pathlib
-import sys
 
 from datetime import datetime, timezone
 from enum import IntEnum

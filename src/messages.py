@@ -166,7 +166,7 @@ class SingleChannelMessageStream(MessageStream):
 
         logging.debug(f'l: {low}, h: {high}, s: {successor}')
         new_segment = _CacheSegment(start, end, self.uncommitted_messages)
-        self.uncommitted_messages.clear()
+        self.uncommitted_messages = {}
 
         if (low is not None) and (high is not None):
             new_segment.merge(self.segments[low:high + 1])
