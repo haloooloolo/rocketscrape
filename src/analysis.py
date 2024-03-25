@@ -275,14 +275,14 @@ class MessageCountAnalysis(CountBasedMessageAnalysis):
 
 
 class SelfKekAnalysis(CountBasedMessageAnalysis):
+    @property
+    def _require_reactions(self) -> bool:
+        return True
+
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
             if ('kek' in emoji_name) and (message.author_id in users):
                 self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
-
-    @property
-    def _require_reactions(self) -> bool:
-        return False
 
     def _title(self) -> str:
         return f'Top {self.stream} self kek offenders'

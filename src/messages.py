@@ -79,7 +79,7 @@ class Message:
     def __repr__(self) -> str:
         return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
 
-    def __hash__(self) -> int:
+    def __hash__(self):
         return hash(self.id)
 
 
@@ -268,7 +268,7 @@ class SingleChannelMessageStream(MessageStream):
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: Iterable[ChannelType], include_threads, *args) -> None:
+    def __init__(self, channels: Iterable[ChannelType], include_threads: bool, *args) -> None:
         self.streams = {SingleChannelMessageStream(c, *args) for c in channels}
         self.__stream_args = args
         self.__include_threads = include_threads
@@ -328,7 +328,7 @@ class MultiChannelMessageStream(MessageStream):
 
 
 class ServerMessageStream(MultiChannelMessageStream):
-    def __init__(self, guild: discord.Guild, include_threads, *args) -> None:
+    def __init__(self, guild: discord.Guild, include_threads: bool, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         super().__init__(channels, include_threads, *args)
         self.__repr = str(guild)
