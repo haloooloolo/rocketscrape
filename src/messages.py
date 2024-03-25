@@ -260,13 +260,20 @@ class SingleChannelMessageStream(MessageStream):
             logging.warning(f'No access to messages in "{self}", ending stream')
             return
 
+    def __hash__(self):
+        return hash(self.channel)
+
     def __repr__(self) -> str:
-        return '# ' + str(self.channel)
+        return str(self.channel)
 
 
 class MultiChannelMessageStream(MessageStream):
-    def __init__(self, channels: Iterable[ChannelType], *args) -> None:
-        self.streams = [SingleChannelMessageStream(channel, *args) for channel in channels]
+    def __init__(self, channels: Iterable[ChannelType], include_threads, *args) -> None:
+        self.streams = {SingleChannelMessageStream(c, *args) for c in channels}
+        self.__stream_args = args
+        self.__include_threads = include_threads
+        suffix = '+' if include_threads else ''
+        self.__repr = f'({", ".join([str(s) for s in self.streams])}){suffix}'
 
     def _get_message(self, message_id: int) -> Optional[Message]:
         for stream in self.streams:
@@ -274,6 +281,26 @@ class MultiChannelMessageStream(MessageStream):
                 return message
 
         return None
+
+    async def __async_init(self) -> 'MultiChannelMessageStream':
+        if not self.__include_threads:
+            return self
+
+        logging.info('Fetching archived threads')
+        for stream in copy.copy(self.streams):
+            assert isinstance(stream.channel, discord.TextChannel)
+            try:
+                for thread in stream.channel.threads:
+                    self.streams.add(SingleChannelMessageStream(thread, *self.__stream_args))
+                async for thread in stream.channel.archived_threads(limit=None):
+                    self.streams.add(SingleChannelMessageStream(thread, *self.__stream_args))
+            except discord.errors.Forbidden:
+                logging.warning(f'No access to thread list for "{stream}", skipping')
+
+        return self
+
+    def __await__(self):
+        return self.__async_init().__await__()
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime],
                           include_reactions=True) -> AsyncIterator[Message]:
@@ -297,31 +324,14 @@ class MultiChannelMessageStream(MessageStream):
                 logging.info(f'End of channel stream, {len(heads)} left')
 
     def __repr__(self) -> str:
-        return f'({", ".join([str(c) for c in self.streams])})'
+        return self.__repr
 
 
 class ServerMessageStream(MultiChannelMessageStream):
-    def __init__(self, guild: discord.Guild, *args) -> None:
+    def __init__(self, guild: discord.Guild, include_threads, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
-        super().__init__(channels + list(guild.threads), *args)
-        self.__stream_args = args
+        super().__init__(channels, include_threads, *args)
         self.__repr = str(guild)
-
-    async def __async_init(self) -> 'ServerMessageStream':
-        logging.info('Fetching archived threads')
-        for stream in self.streams:
-            if not isinstance(stream.channel, discord.TextChannel):
-                continue
-            try:
-                async for t in stream.channel.archived_threads(limit=None):
-                    self.streams.append(SingleChannelMessageStream(t, *self.__stream_args))
-            except discord.errors.Forbidden:
-                logging.warning(f'No access to thread list for "{stream}", skipping')
-
-        return self
-
-    def __await__(self):
-        return self.__async_init().__await__()
 
     def __repr__(self) -> str:
         return self.__repr

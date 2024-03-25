@@ -16,22 +16,23 @@ export DISCORD_USER_TOKEN=<token>
 
 ## Usage
 
-The tool primarily expects a source (`--flag`) and analysis type (positional argument) to be specified. 
+The tool primarily expects a source (flag) and analysis type (positional argument) to be specified.
 Below are examples of how to use RocketScrape:
 
 ```bash
-rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] ANALYSIS 
+rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] (--include-threads | --exclude-threads) ANALYSIS
 ```
-Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel ID or one of the predefined channel names from 
-the `Channel` enum in [rocketscrape.py](src/rocketscrape.py). Similarly, you can run it on an entire server using:
+Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel / thread ID or one of the predefined channel names from
+the `Channel` enum in [rocketscrape.py](src/rocketscrape.py). You can choose to include or exclude threads within specified
+channels using the required `--include-threads` or `--exclude-threads` flag. Similarly, you can run rocketscrape on an entire server using:
 ```bash
-rocketscrape --server SERVER ANALYSIS 
+rocketscrape --server SERVER (--include-threads | --exclude-threads) ANALYSIS
 ```
 `SERVER` can either be a server ID or a name defined in the `Server` enum. There are optional `-s / --start` and
 `-e / --end` arguments that accept an ISO format datetime string to restrict the date range. For instance,
 to get the top contributors for the support channel over the last month, you can use:
 ```bash
-rocketscrape -c support -s $(date -d "-1 month" +"%Y-%m-%d") contributors
+rocketscrape -c support -s $(date -d "-1 month" +"%Y-%m-%d") --include-threads contributors
 ```
 For a complete list of global options and analysis types, run the help command:
 ```bash

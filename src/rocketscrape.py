@@ -62,7 +62,7 @@ async def _main(client) -> int:
         if not (guild := client.get_guild(args.server)):
             logging.error(f'Server {args.server} could not be found')
             return 1
-        stream = await ServerMessageStream(guild, *common_stream_args)
+        stream = await ServerMessageStream(guild, args.threads, *common_stream_args)
     else:
         channels: list[discord.TextChannel | discord.Thread] = []
         for channel_id in args.channels:
@@ -72,8 +72,8 @@ async def _main(client) -> int:
             if isinstance(channel, (discord.TextChannel, discord.Thread)):
                 channels.append(channel)
 
-        if len(channels) > 1:
-            stream = MultiChannelMessageStream(channels, *common_stream_args)
+        if len(channels) > 1 or args.threads:
+            stream = await MultiChannelMessageStream(channels, args.threads, *common_stream_args)
         else:
             stream = SingleChannelMessageStream(channels[0], *common_stream_args)
 
@@ -111,12 +111,18 @@ def parse_args():
     source.add_argument('--server', type=Server.argtype,
                         help=f'one of {server_choices} or server ID')
 
+    threads = parser.add_mutually_exclusive_group(required=True)
+    threads.add_argument('--include-threads', dest='threads', action='store_true', default=None,
+                         help='include streams for all threads within the specified channels')
+    threads.add_argument('--exclude-threads', dest='threads', action='store_false', default=None,
+                         help='do not include streams for any threads within the specified channels')
+
     parser.add_argument('-s', '--start', type=datetime.fromisoformat,
-                        help=f'start of date range in ISO format')
+                        help='start of date range in ISO format')
     parser.add_argument('-e', '--end', type=datetime.fromisoformat,
-                        help=f'end of date range in ISO format')
+                        help='end of date range in ISO format')
     parser.add_argument('-r', '--max-results', type=int, default=10,
-                        help=f'maximum length of analysis output')
+                        help='maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
     parser.add_argument('--cache-dir', type=str, default=(root_dir/'cache'),
