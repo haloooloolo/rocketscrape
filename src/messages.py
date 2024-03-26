@@ -288,7 +288,8 @@ class MultiChannelMessageStream(MessageStream):
 
         logging.info('Fetching archived threads')
         for stream in copy.copy(self.streams):
-            assert isinstance(stream.channel, discord.TextChannel)
+            if not isinstance(stream.channel, discord.TextChannel):
+                continue
             try:
                 for thread in stream.channel.threads:
                     self.streams.add(SingleChannelMessageStream(thread, *self.__stream_args))

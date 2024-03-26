@@ -91,7 +91,7 @@ class MessageAnalysis(ABC):
         return range_str
 
     @abstractmethod
-    async def display_result(self, result: Any, client: Client, max_results: int) -> None:
+    async def display_result(self, result: Result[Any], client: Client, max_results: int) -> None:
         pass
 
     @staticmethod
@@ -462,18 +462,21 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 
 
 class ActivityTimeAnalyis(MessageAnalysis):
-    def __init__(self, stream, args):
+    def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.user: int = args.user
-        self.num_buckets = args.num_buckets
+        self.num_buckets: int = args.num_buckets
         assert (24 * 60 % self.num_buckets) == 0, \
             'bucket count doesn\'t cleanly divide into minutes'
+        self.key_format: str = args.key_format
 
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return MessageAnalysis.custom_args() + (
             CustomArgument('user', int),
             CustomOption('num-buckets', int, 24),
+            CustomOption('key-format', str, '',
+                         'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
         )
 
     @property
@@ -481,19 +484,32 @@ class ActivityTimeAnalyis(MessageAnalysis):
         return False
 
     def _prepare(self) -> None:
-        self.buckets = [0] * self.num_buckets
+        self.buckets: dict[str, list[int]] = {}
+
+    def _get_key(self, timestamp: datetime) -> str:
+        return self.key_format \
+            .replace('$y', str(timestamp.year)) \
+            .replace('$q', str(int((timestamp.month + 2) / 3))) \
+            .replace('$m', str(timestamp.month)) \
+            .replace('$d', str(timestamp.day))
 
     def _on_message(self, message: Message) -> None:
-        if message.author_id == self.user:
-            timestamp = message.time.astimezone()
-            bucket = int((60 * timestamp.hour + timestamp.minute) / (24 * 60 / self.num_buckets))
-            self.buckets[bucket] += 1
+        if message.author_id != self.user:
+            return
 
-    def _finalize(self) -> tuple[int, ...]:
-        return tuple(self.buckets)
+        timestamp = message.time.astimezone()
+        key = self._get_key(timestamp)
+        if key not in self.buckets:
+            self.buckets[key] = [0] * self.num_buckets
 
-    async def display_result(self, result: Result[tuple[int, ...]], client: Client, max_results: int) -> None:
-        x = list(range(self.num_buckets))
+        bucket = int((60 * timestamp.hour + timestamp.minute) / (24 * 60 / self.num_buckets))
+        self.buckets[key][bucket] += 1
+
+    def _finalize(self) -> dict[str, list[int]]:
+        return self.buckets
+
+    async def display_result(self, result: Result[dict[str, list[int]]], client: Client, max_results: int) -> None:
+        x = np.arange(self.num_buckets)
 
         labels = []
         bucket_width = int(24 * 60 / self.num_buckets)
@@ -504,16 +520,25 @@ class ActivityTimeAnalyis(MessageAnalysis):
             end_fmt = f'{(end // 60):02}:{(end % 60):02}'
             labels.append(f'{start_fmt} - {end_fmt}')
 
+        full_width = 0.75
+        bar_width = full_width / len(result.data)
+        offset = (bar_width - full_width) / 2
+        for key, buckets in result.data.items():
+            plt.bar(x + offset, buckets, bar_width, label=key)
+            offset += bar_width
+
         plt.xticks(x, labels, rotation=90)
         plt.xlim(-1, self.num_buckets)
         plt.ylabel('message count')
-        plt.bar(x, result.data)
-        plt.subplots_adjust(bottom=0.25)
+
+        if self.key_format:
+            plt.legend(loc='upper left')
 
         username = await client.get_username(self.user)
         title = f'{username} message activity in {self.stream} by local time'
         plt.title(title.encode('ascii', 'ignore').decode('ascii'))
 
+        plt.subplots_adjust(bottom=0.25)
         plt.show()
 
     @staticmethod
