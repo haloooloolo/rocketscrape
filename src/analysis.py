@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any, Generic, TypeVar, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -40,12 +40,12 @@ class Result(Generic[T]):
     data: T
 
 
-class MessageAnalysis(ABC):
+class MessageAnalysis(ABC, Generic[T]):
     def __init__(self, stream: MessageStream, args):
         self.log_interval = timedelta(seconds=args.log_interval)
         self.stream = stream
 
-    async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result:
+    async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result[T]:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
@@ -74,7 +74,7 @@ class MessageAnalysis(ABC):
         pass
 
     @abstractmethod
-    def _finalize(self) -> Any:
+    def _finalize(self) -> T:
         pass
 
     @staticmethod
@@ -91,7 +91,7 @@ class MessageAnalysis(ABC):
         return range_str
 
     @abstractmethod
-    async def display_result(self, result: Result[Any], client: Client, max_results: int) -> None:
+    async def display_result(self, result: Result[T], client: Client, max_results: int) -> None:
         pass
 
     @staticmethod
@@ -200,7 +200,7 @@ class ContributorHistoryAnalysis(MessageAnalysis):
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return TopContributorAnalysis.custom_args() + (
-            CustomOption('snapshot-interval', int, 28, 'time between data snapshots in days'),
+            CustomOption('snapshot-interval', int, 7, 'time between data snapshots in days'),
         )
 
     @property
@@ -214,13 +214,13 @@ class ContributorHistoryAnalysis(MessageAnalysis):
         self.next_date: Optional[datetime] = None
         self.last_ts: Optional[datetime] = None
 
-    def __add_snapshot(self, date: datetime) -> None:
+    def __add_snapshot(self, dt: datetime) -> None:
         for author, time_min in self.__contributor_analysis.total_time.items():
             if author not in self.y:
                 self.y[author] = [0.0] * len(self.x)
             self.y[author].append(time_min)
 
-        self.x.append(date)
+        self.x.append(dt)
 
     def _on_message(self, message: Message) -> None:
         self.__contributor_analysis._on_message(message)

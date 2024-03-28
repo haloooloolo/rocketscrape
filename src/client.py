@@ -18,9 +18,11 @@ class Client(discord.Client):
             return
 
         logging.info(f'Logged in as {self.user}')
-        await self.__func(self)
-        await self.close()
-        self.__lock.release()
+        try:
+            await self.__func(self)
+            await self.close()
+        finally:
+            self.__lock.release()
 
     async def get_username(self, user_id: int) -> str:
         try:

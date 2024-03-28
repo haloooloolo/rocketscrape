@@ -158,7 +158,7 @@ class SingleChannelMessageStream(MessageStream):
         low, high, successor = None, None, None
 
         for segment_nr, segment in enumerate(self.segments):
-            if end < segment.start:
+            if end < segment.start:  # new segment precedes this one
                 successor = segment_nr
             elif start <= segment.end:  # segments overlap
                 low = segment_nr if (low is None) else low
@@ -169,8 +169,8 @@ class SingleChannelMessageStream(MessageStream):
         self.uncommitted_messages = {}
 
         if (low is not None) and (high is not None):
-            new_segment.merge(self.segments[low:high + 1])
-            self.segments = self.segments[:low] + [new_segment] + self.segments[high + 1:]
+            new_segment.merge(self.segments[low:(high + 1)])
+            self.segments = self.segments[:low] + [new_segment] + self.segments[(high + 1):]
         elif successor is not None:
             self.segments.insert(successor, new_segment)
         else:
