@@ -12,7 +12,7 @@ import discord
 
 from client import Client
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
-from analysis import MessageAnalysis
+from analysis import MessageAnalysis, CustomArgument, CustomFlag, CustomOption
 
 
 T = TypeVar('T')
@@ -133,10 +133,12 @@ def parse_args():
                         help='maximum number of new messages that will be committed to disk at once')
 
     def add_custom_arg(_parser, _arg):
-        try:
-            _parser.add_argument(f'--{_arg.name}', type=_arg.type, default=_arg.default, help=_arg.help)
-        except AttributeError:
+        if isinstance(_arg, CustomFlag):
+            _parser.add_argument(f'--{_arg.name}', action='store_true', help=_arg.help)
+        elif isinstance(_arg, CustomArgument):
             _parser.add_argument(_arg.name, type=_arg.type, help=_arg.help)
+        elif isinstance(_arg, CustomOption):
+            _parser.add_argument(f'--{_arg.name}', type=_arg.type, default=_arg.default, help=_arg.help)
 
     base_cls = MessageAnalysis
     for arg in base_cls.custom_args():

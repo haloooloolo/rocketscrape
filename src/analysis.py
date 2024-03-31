@@ -23,6 +23,12 @@ class CustomArgument:
 
 
 @dataclass
+class CustomFlag:
+    name: str
+    help: Optional[str] = None
+
+
+@dataclass
 class CustomOption:
     name: str
     type: type[Any]
@@ -30,7 +36,7 @@ class CustomOption:
     help: Optional[str] = None
 
 
-ArgType = Union[CustomArgument, CustomOption]
+ArgType = Union[CustomArgument, CustomOption, CustomFlag]
 
 
 @dataclass
@@ -100,7 +106,7 @@ class MessageAnalysis(ABC, Generic[T]):
         pass
 
     @classmethod
-    def custom_args(cls) -> tuple[Union[CustomArgument, CustomOption], ...]:
+    def custom_args(cls) -> tuple[ArgType, ...]:
         return ()
 
 
@@ -544,3 +550,44 @@ class ActivityTimeAnalyis(MessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'message-time-histogram'
+
+
+class WordCountAnalysis(MessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.word: str = args.word
+        self.ignore_case = args.ignore_case
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return MessageAnalysis.custom_args() + (
+            CustomArgument('word', str),
+            CustomFlag('ignore-case', 'make word match case-insensitive'),
+        )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.count: int = 0
+
+    def _finalize(self) -> int:
+        return self.count
+
+    def _on_message(self, message: Message) -> None:
+        word, content = self.word, message.content
+        if self.ignore_case:
+            word, content = word.lower(), content.lower()
+
+        if word in content:
+            self.count += 1
+
+    async def display_result(self, result: Result[int], client: Client, max_results: int) -> None:
+        range_str = self._get_date_range_str(result.start, result.end)
+        print('')
+        print(f'{result.data} occurrences of "{self.word}" in {self.stream} {range_str}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'word-count'
