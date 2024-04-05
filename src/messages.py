@@ -11,7 +11,7 @@ import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 from abc import ABC, abstractmethod
-from typing import Optional, AsyncIterator, Iterable, Union
+from typing import Optional, AsyncIterator, Iterable, Union, Any
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
@@ -24,30 +24,25 @@ class Message:
 
     def __init__(self, d_msg: discord.Message) -> None:
         self.id: int = d_msg.id
-        self.time: datetime = d_msg.created_at
+        self.channel_id: int = d_msg.channel.id
         self.author_id: int = d_msg.author.id
+        self.created: datetime = d_msg.created_at
+        self.last_edited: Optional[datetime] = d_msg.edited_at
         self.content: str = d_msg.content
         self.reference: Optional[int] = d_msg.reference.message_id if d_msg.reference else None
         self.attachments: list[str] = [a.content_type for a in d_msg.attachments if a.content_type]
-        self.embeds: dict[str, list[str]] = {}
+        self.embeds: list[dict] = [dict(embed.to_dict()) for embed in d_msg.embeds]
         self._reactions: Optional[dict[str, set[int]]] = None
-
-        for embed in d_msg.embeds:
-            if embed.type and embed.url:
-                if embed.type not in self.embeds:
-                    self.embeds[embed.type] = []
-                self.embeds[embed.type].append(embed.url)
 
     @property
     def reactions(self) -> dict[str, set[int]]:
         return self._reactions or {}
 
     async def _fetch_reactions(self, d_msg: discord.Message) -> None:
-        self._reactions = {}
-
         async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[int]]:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
+        self._reactions = {}
         reactions = [gather_reactions(r) for r in d_msg.reactions]
         for res in await asyncio.gather(*reactions, return_exceptions=True):
             if isinstance(res, BaseException):
@@ -67,17 +62,17 @@ class Message:
 
     @property
     def mentions(self) -> set[int]:
-        matches = Message.__mention_pattern.findall(self.content)
+        matches = self.__mention_pattern.findall(self.content)
         return {int(match) for match in matches}
 
     def __eq__(self, other) -> bool:
         return self.id == other.id
 
     def __lt__(self, other) -> bool:
-        return self.time < other.time
+        return self.created < other.created
 
     def __repr__(self) -> str:
-        return f'Message{{{self.author_id} @ {self.time}: "{self.content}"}}'
+        return f'Message{{{self.author_id} @ {self.created}: "{self.content}"}}'
 
     def __hash__(self):
         return hash(self.id)
@@ -98,7 +93,7 @@ class _CacheSegment:
         self.messages = {}
 
         while self_messages or other_messages:
-            if (not self_messages) or (other_messages and (other_messages[-1].time <= self_messages[-1].time)):
+            if (not self_messages) or (other_messages and (other_messages[-1].created <= self_messages[-1].created)):
                 # bias to other_messages so last inserted will be from self_messages in case of duplicate
                 message = other_messages.pop()
             else:
@@ -110,46 +105,57 @@ class _CacheSegment:
         return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
 
 
-class MessageStream(ABC):
-    def get_message(self, message_id: Optional[int]) -> Optional[Message]:
-        if message_id is None:
-            return None
-        return self._get_message(message_id)
+class _Cache:
+    LATEST_VERSION = 1
 
-    @abstractmethod
-    def _get_message(self, message_id: int) -> Optional[Message]:
-        pass
-
-    @abstractmethod
-    def get_history(self, start: Optional[datetime], end: Optional[datetime],
-                    include_reactions=True) -> AsyncIterator[Message]:
-        pass
-
-
-class SingleChannelMessageStream(MessageStream):
-    def __init__(self,
-                 channel: ChannelType,
-                 cache_dir: str,
-                 refresh_window: int,
-                 commit_batch_size: int) -> None:
-        self.channel = channel
+    def __init__(self, cache_dir: str, channel: ChannelType):
+        self.version: int = self.LATEST_VERSION
+        self.cache_dir: str = cache_dir
+        self.channel_id: int = channel.id
+        self.__channel_repr: str = str(channel)
+        self.segments: list[_CacheSegment] = []
         self.uncommitted_messages: dict[int, Message] = {}
-        self.cache_dir = cache_dir
-        self.refresh_window = timedelta(hours=refresh_window)
-        self.commit_batch_size = commit_batch_size
+
+        cache_path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         try:
-            self.segments = self.__load()
+            with open(cache_path, 'rb') as file:
+                cache = pickle.load(file)
+            if self == cache:
+                self.segments = cache.segments
+            else:
+                logging.warning(f'''Found mismatched message cache version for
+                    "{self.__channel_repr}", dropping data''')
+                os.remove(cache_path)
         except (FileNotFoundError, EOFError):
-            self.segments = []
+            pass
 
-    def __load(self) -> list[_CacheSegment]:
-        path = os.path.join(self.cache_dir, f'{self.channel.id}.pkl')
-        with open(path, 'rb') as file:
-            return pickle.load(file)
+    def __eq__(self, other: Any) -> bool:
+        if not isinstance(other, _Cache):
+            return False
+        return (self.channel_id == other.channel_id) and (self.version == other.version)
 
-    def __commit(self, start: Optional[datetime], end: datetime) -> None:
+    def __getstate__(self) -> dict[str, Any]:
+        attributes = {'version', 'channel_id', 'segments'}
+        return {k: v for k, v in self.__dict__.items() if k in attributes}
+
+    def __getitem__(self, message_id: int) -> Optional[Message]:
+        if message_id in self.uncommitted_messages:
+            return self.uncommitted_messages[message_id]
+
+        for segment in self.segments:
+            if message_id in segment.messages:
+                return segment.messages[message_id]
+
+        return None
+
+    def add(self, message: Message) -> None:
+        self.uncommitted_messages[message.id] = message
+
+    def commit(self, start: Optional[datetime], end: datetime) -> None:
         if self.uncommitted_messages:
-            logging.info(f'Saving {len(self.uncommitted_messages)} new messages from "{self}" to disk')
+            num_messages = len(self.uncommitted_messages)
+            channel_name = self.__channel_repr
+            logging.info(f'Saving {num_messages} new messages from "{channel_name}" to disk')
 
         logging.debug(f'start: {start}, end: {end}')
         logging.debug(str(self.segments))
@@ -177,21 +183,42 @@ class SingleChannelMessageStream(MessageStream):
             self.segments.append(new_segment)
 
         os.makedirs(self.cache_dir, exist_ok=True)
-        path = os.path.join(self.cache_dir, f'{self.channel.id}.pkl')
+        path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         logging.debug(str(self.segments))
 
         with open(path, 'wb') as file:
-            pickle.dump(self.segments, file)
+            pickle.dump(self, file)
+
+
+class MessageStream(ABC):
+    def get_message(self, message_id: Optional[int]) -> Optional[Message]:
+        if message_id is None:
+            return None
+        return self._get_message(message_id)
+
+    @abstractmethod
+    def _get_message(self, message_id: int) -> Optional[Message]:
+        pass
+
+    @abstractmethod
+    def get_history(self, start: Optional[datetime], end: Optional[datetime],
+                    include_reactions=True) -> AsyncIterator[Message]:
+        pass
+
+
+class SingleChannelMessageStream(MessageStream):
+    def __init__(self,
+                 channel: ChannelType,
+                 cache_dir: str,
+                 refresh_window: int,
+                 commit_batch_size: int) -> None:
+        self.channel = channel
+        self.refresh_window = timedelta(hours=refresh_window)
+        self.commit_batch_size = commit_batch_size
+        self.__cache = _Cache(cache_dir, channel)
 
     def _get_message(self, message_id: int) -> Optional[Message]:
-        if message_id in self.uncommitted_messages:
-            return self.uncommitted_messages[message_id]
-
-        for segment in self.segments:
-            if message_id in segment.messages:
-                return segment.messages[message_id]
-
-        return None
+        return self.__cache[message_id]
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime],
                           include_reactions=True) -> AsyncIterator[Message]:
@@ -203,27 +230,26 @@ class SingleChannelMessageStream(MessageStream):
             if isinstance(_message, discord.Message):
                 _d_msg = _message
                 _message = Message(_d_msg)
-                self.uncommitted_messages[_message.id] = _message
             else:
-                now = datetime.now(timezone.utc)
-                is_stale = (now - _message.time) <= self.refresh_window
-                missing_reactions = (_message._reactions is None) and include_reactions
+                is_stale = (datetime.now(timezone.utc) - _message.created) <= self.refresh_window
+                missing_reactions = (_message.reactions is None) and include_reactions
                 if is_stale or missing_reactions:
                     _d_msg = await _message.refresh(self.channel)
-                    self.uncommitted_messages[_message.id] = _message
 
-            if _d_msg and include_reactions:
-                await _message._fetch_reactions(_d_msg)
+            if _d_msg:
+                if include_reactions:
+                    await _message._fetch_reactions(_d_msg)
+                self.__cache.add(_message)
 
             nonlocal last_timestamp
-            last_timestamp = _message.time
+            last_timestamp = _message.created
 
-            if len(self.uncommitted_messages) >= self.commit_batch_size:
-                self.__commit(start, _message.time)
+            if len(self.__cache.uncommitted_messages) >= self.commit_batch_size:
+                self.__cache.commit(start, _message.created)
 
             return _message
 
-        for segment in copy.copy(self.segments):
+        for segment in copy.copy(self.__cache.segments):
             # segment ahead of requested interval, skip
             if start and start > segment.end:
                 continue
@@ -232,18 +258,18 @@ class SingleChannelMessageStream(MessageStream):
             async for d_msg in self.channel.history(limit=None, after=last_timestamp,
                                                     before=segment.start, oldest_first=True):
                 message = await handle_message(d_msg)
-                if end and message.time > end:
-                    self.__commit(start, message.time)
+                if end and message.created > end:
+                    self.__cache.commit(start, message.created)
                     return
 
                 yield message
 
             for message in segment.messages.values():
-                if end and message.time > end:
-                    self.__commit(start, message.time)
+                if end and message.created > end:
+                    self.__cache.commit(start, message.created)
                     return
 
-                if (start is None) or (message.time >= start):
+                if (start is None) or (message.created >= start):
                     yield await handle_message(message)
 
         try:
@@ -253,9 +279,9 @@ class SingleChannelMessageStream(MessageStream):
 
             if last_timestamp is not None:
                 if end and end < datetime.now(timezone.utc):
-                    self.__commit(start, end)
+                    self.__cache.commit(start, end)
                 else:
-                    self.__commit(start, last_timestamp)
+                    self.__cache.commit(start, last_timestamp)
         except discord.Forbidden:
             logging.warning(f'No access to messages in "{self}", ending stream')
             return

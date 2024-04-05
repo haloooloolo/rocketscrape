@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
 from typing import Optional, Any, Generic, TypeVar, Union
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -59,7 +59,7 @@ class MessageAnalysis(ABC, Generic[T]):
         async for message in self.stream.get_history(start, end, self._require_reactions):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
-                logging.info(f'Message stream reached {message.time}')
+                logging.info(f'Message stream reached {message.created}')
                 last_ts = ts
 
             self._on_message(message)
@@ -161,7 +161,7 @@ class TopContributorAnalysis(MessageAnalysis):
         self.total_time: dict[int, float] = {}
 
     def _on_message(self, message: Message) -> None:
-        timestamp = message.time
+        timestamp = message.created
         author_id = message.author_id
 
         session_start, session_end = self.open_sessions.get(author_id, (timestamp, timestamp))
@@ -230,11 +230,11 @@ class ContributorHistoryAnalysis(MessageAnalysis):
 
     def _on_message(self, message: Message) -> None:
         self.__contributor_analysis._on_message(message)
-        self.last_ts = message.time
+        self.last_ts = message.created
 
         if self.next_date is None:
-            self.next_date = message.time
-        elif message.time < self.next_date:
+            self.next_date = message.created
+        elif message.created < self.next_date:
             return
 
         self.__add_snapshot(self.next_date)
@@ -321,8 +321,8 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
     def _on_message(self, message: Message) -> None:
         super()._on_message(message)
-        self.last_ts = message.time
-        self.last_seen[message.author_id] = message.time
+        self.last_ts = message.created
+        self.last_seen[message.author_id] = message.created
 
     def _finalize(self) -> dict[int, float]:
         total_time = super()._finalize()
@@ -503,7 +503,7 @@ class ActivityTimeAnalyis(MessageAnalysis):
         if message.author_id != self.user:
             return
 
-        timestamp = message.time.astimezone()
+        timestamp = message.created.astimezone()
         key = self._get_key(timestamp)
         if key not in self.buckets:
             self.buckets[key] = [0] * self.num_buckets
