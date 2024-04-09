@@ -5,13 +5,11 @@ import inspect
 import pathlib
 
 from datetime import datetime, timezone
-from enum import IntEnum
-from typing import TypeVar
-
-import discord
+from enum import Enum, IntEnum
+from typing import TypeVar, get_args
 
 from client import Client
-from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream
+from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, ChannelType
 from analysis import MessageAnalysis, CustomArgument, CustomFlag, CustomOption
 
 
@@ -45,6 +43,10 @@ class Channel(_EnumArg):
     support = 468923220607762485
 
 
+class Role(Enum):
+    rocketpool = (405169632195117078, Server.rocketpool)
+
+
 def main():
     logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
     Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
@@ -59,18 +61,21 @@ async def _main(client) -> int:
 
     common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
-        if not (guild := client.get_guild(args.server)):
+        if not (guild := await client.try_fetch_guild(args.server)):
             logging.error(f'Server {args.server} could not be found')
             return 1
         stream = await ServerMessageStream(guild, args.threads, *common_stream_args)
     else:
-        channels: list[discord.TextChannel | discord.Thread] = []
-        for channel_id in args.channels:
-            if not (channel := client.get_channel(channel_id)):
+        channels: list[ChannelType] = []
+        for channel_id in args.channel:
+            if not (channel := await client.try_fetch_channel(channel_id)):
                 logging.error(f'Channel {channel_id} could not be found')
                 return 1
-            if isinstance(channel, (discord.TextChannel, discord.Thread)):
-                channels.append(channel)
+            if not isinstance(channel, get_args(ChannelType)):
+                logging.error(f'Channel {channel_id} has incompatible type {type(channel)}')
+                return 2
+
+            channels.append(channel)
 
         if len(channels) > 1 or args.threads:
             stream = await MultiChannelMessageStream(channels, args.threads, *common_stream_args)
@@ -80,7 +85,7 @@ async def _main(client) -> int:
     try:
         analysis = args.analysis(stream, args)
         result = await analysis.run(args.start, args.end)
-        await analysis.display_result(result, client, args.max_results)
+        await result.display(client, args.max_results)
     except Exception as exc:
         logging.exception(str(exc))
         return 1
@@ -105,7 +110,7 @@ def parse_args():
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
-    source.add_argument('-c', '--channels', type=Channel.argtype, action='append',
+    source.add_argument('-c', '--channel', type=Channel.argtype, action='append',
                         help=f'one or more of {channel_choices} or channel ID(s)')
     server_choices = tuple((s.name for s in Server))
     source.add_argument('--server', type=Server.argtype,
@@ -121,7 +126,7 @@ def parse_args():
                         help='start of date range in ISO format')
     parser.add_argument('-e', '--end', type=datetime.fromisoformat,
                         help='end of date range in ISO format')
-    parser.add_argument('-r', '--max-results', type=int, default=10,
+    parser.add_argument('-r', '--max-results', type=int, default=25,
                         help='maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')

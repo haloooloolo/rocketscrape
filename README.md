@@ -6,7 +6,7 @@ A command line tool to process Discord message streams.
 
 To get started, install the `rocketscrape` Python package from within the directory using:
 ```bash
-pip install -e .
+pip install .
 ```
 RocketScrape requires a Discord authentication token for API requests, which should be stored in a
 `DISCORD_USER_TOKEN` environment variable. For more information on how to obtain a token for your account see https://discordpy-self.readthedocs.io/en/latest/authenticating.html.
@@ -46,5 +46,5 @@ rocketscrape contributor-history -h
 ## Adding a custom analysis class
 Each analysis type in RocketScrape is implemented as a subclass of `MessageAnalysis`. These classes are required to
 implement `_require_reactions(self)`, `_prepare(self)`, `_on_message(self, message)`, `_finalize(self)`,
-`display_result(self, result, client, max_results)` and `subcommand()`. Optionally, `custom_args(cls)` can be overridden
+`_display_result(self, result, client, max_results)` and `subcommand()`. Optionally, `custom_args(cls)` can be overridden
 to add analysis-specific command line arguments. Examples can be found in [analysis.py](src/analysis.py).

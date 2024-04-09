@@ -4,11 +4,12 @@ import re
 from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
-from typing import Optional, Any, Generic, TypeVar, Union
+from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 
+import rocketscrape
 from client import Client
 from messages import MessageStream, Message
 
@@ -44,6 +45,10 @@ class Result(Generic[T]):
     start: Optional[datetime]
     end: Optional[datetime]
     data: T
+    __display: Callable[['Result[T]', Client, int], Awaitable[None]]
+
+    async def display(self, client: Client, max_results: int):
+        await self.__display(self, client, max_results)
 
 
 class MessageAnalysis(ABC, Generic[T]):
@@ -64,7 +69,7 @@ class MessageAnalysis(ABC, Generic[T]):
 
             self._on_message(message)
 
-        return Result(start, end, self._finalize())
+        return Result(start, end, self._finalize(), self._display_result)
 
     @property
     @abstractmethod
@@ -97,7 +102,7 @@ class MessageAnalysis(ABC, Generic[T]):
         return range_str
 
     @abstractmethod
-    async def display_result(self, result: Result[T], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[T], client: Client, max_results: int) -> None:
         pass
 
     @staticmethod
@@ -125,14 +130,14 @@ class CountBasedMessageAnalysis(MessageAnalysis):
     def _title(self) -> str:
         pass
 
-    async def display_result(self, result: Result[dict[int, int]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[int, int]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_users = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
         print()
         print(f'{self._title()} {range_str}')
         for i, (user_id, count) in enumerate(top_users):
-            print(f'{i + 1}. {await client.get_username(user_id)}: {count}')
+            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {count}')
 
 
 class TopContributorAnalysis(MessageAnalysis):
@@ -160,6 +165,13 @@ class TopContributorAnalysis(MessageAnalysis):
         self.open_sessions: dict[int, tuple[datetime, datetime]] = {}
         self.total_time: dict[int, float] = {}
 
+    def _get_session_time(self, start: datetime, end: datetime) -> float:
+        return self.__to_minutes(end - start) + self.base_session_time
+
+    def _close_session(self, author_id: int, start: datetime, end: datetime) -> None:
+        session_time = self._get_session_time(start, end)
+        self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
+
     def _on_message(self, message: Message) -> None:
         timestamp = message.created
         author_id = message.author_id
@@ -169,19 +181,17 @@ class TopContributorAnalysis(MessageAnalysis):
             # extend session to current timestamp
             self.open_sessions[author_id] = (session_start, timestamp)
         else:
-            session_time = self.__to_minutes(session_end - session_start) + self.base_session_time
-            self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
+            self._close_session(author_id, session_start, session_end)
             del self.open_sessions[author_id]
 
     def _finalize(self) -> dict[int, float]:
         # end remaining sessions
         for author_id, (session_start, session_end) in self.open_sessions.items():
-            session_time = self.__to_minutes(session_end - session_start) + self.base_session_time
-            self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
+            self._close_session(author_id, session_start, session_end)
 
         return self.total_time
 
-    async def display_result(self, result: Result[dict[int, float]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[int, float]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
@@ -190,7 +200,7 @@ class TopContributorAnalysis(MessageAnalysis):
         for i, (user_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60
-            print(f'{i + 1}. {await client.get_username(user_id)}: {hours}h {minutes}m')
+            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {hours}h {minutes}m')
 
     @staticmethod
     def subcommand() -> str:
@@ -246,11 +256,11 @@ class ContributorHistoryAnalysis(MessageAnalysis):
             self.__add_snapshot(self.last_ts)
         return self.x, self.y
 
-    async def display_result(self, result: Result[tuple[list[datetime], dict[int, list[float]]]],
-                             client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[tuple[list[datetime], dict[int, list[float]]]],
+                              client: Client, max_results: int) -> None:
         x, y = result.data
         for user_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:max_results]:
-            plt.plot(np.array(x), np.array(data), label=(await client.get_username(user_id))
+            plt.plot(np.array(x), np.array(data), label=(await client.try_fetch_username(user_id))
                      .encode('ascii', 'ignore').decode('ascii'))
 
         plt.ylabel('time (mins)')
@@ -341,7 +351,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         for i, (author_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60
-            print(f'{i + 1}. {await client.get_username(author_id)}: {hours}h {minutes}m')
+            print(f'{i + 1}. {await client.try_fetch_username(author_id)}: {hours}h {minutes}m')
 
     @staticmethod
     def subcommand() -> str:
@@ -514,7 +524,7 @@ class ActivityTimeAnalyis(MessageAnalysis):
     def _finalize(self) -> dict[str, list[int]]:
         return self.buckets
 
-    async def display_result(self, result: Result[dict[str, list[int]]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[str, list[int]]], client: Client, max_results: int) -> None:
         x = np.arange(self.num_buckets)
 
         labels = []
@@ -540,7 +550,7 @@ class ActivityTimeAnalyis(MessageAnalysis):
         if self.key_format:
             plt.legend(loc='upper left')
 
-        username = await client.get_username(self.user)
+        username = await client.try_fetch_username(self.user)
         title = f'{username} message activity in {self.stream} by local time'
         plt.title(title.encode('ascii', 'ignore').decode('ascii'))
 
@@ -583,7 +593,7 @@ class WordCountAnalysis(MessageAnalysis):
         if word in content:
             self.count += 1
 
-    async def display_result(self, result: Result[int], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[int], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         print('')
         print(f'{result.data} occurrences of "{self.word}" in {self.stream} {range_str}')
@@ -591,3 +601,85 @@ class WordCountAnalysis(MessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'word-count'
+
+
+class SupportBountyAnalysis(TopContributorAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.min_monthly_activity = args.min_monthly_activity
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return TopContributorAnalysis.custom_args() + (
+            CustomOption('min-monthly-activity', int, 60),
+        )
+
+    def _prepare(self) -> None:
+        self.open_sessions: dict[int, tuple[datetime, datetime]] = {}
+        self.time_by_month: dict[tuple[int, int], dict[int, float]] = {}
+
+    def _close_session(self, author_id: int, start: datetime, end: datetime) -> None:
+        session_time = self._get_session_time(start, end)
+        month = (end.month, end.year)
+        if month not in self.time_by_month:
+            self.time_by_month[month] = {}
+        self.time_by_month[month][author_id] = self.time_by_month[month].get(author_id, 0) + session_time
+
+    def _finalize(self) -> dict[int, float]:
+        for author_id, (session_start, session_end) in self.open_sessions.items():
+            self._close_session(author_id, session_start, session_end)
+
+        total_time: dict[int, float] = {}
+        participation_count: dict[int, int] = {}
+
+        for monthly_data in self.time_by_month.values():
+            for author_id, time in monthly_data.items():
+                if time >= self.min_monthly_activity:
+                    participation_count[author_id] = participation_count.get(author_id, 0) + 1
+                    total_time[author_id] = total_time.get(author_id, 0) + time
+
+        for author_id in list(total_time.keys()):
+            if participation_count[author_id] < len(self.time_by_month):
+                del total_time[author_id]
+
+        return total_time
+
+    async def _display_result(self, result: Result[dict[int, float]], client: Client, max_results: int) -> None:
+        team_role_id = 405169632195117078
+        core_team_role = await client.try_fetch_role(team_role_id, rocketscrape.Server.rocketpool)
+
+        if core_team_role is not None:
+            team_members = {member.id for member in await core_team_role.fetch_members()}
+        else:
+            logging.warning(f'Could not fetch Rocket Pool team members (role id {team_role_id})')
+            team_members = set()
+
+        contributors: list[tuple[str, float]] = []
+
+        def user_eligible(_user) -> bool:
+            if _user is None:
+                return True
+            return not (_user.bot or (_user.id in team_members))
+
+        for user_id, time in result.data.items():
+            user = await client.try_fetch_user(user_id)
+            if user_eligible(user):
+                username = await client.try_fetch_username(user or user_id)
+                contributors.append((username, time))
+
+        top_contributors = heapq.nlargest(max_results, contributors, key=lambda a: a[1])
+        range_str = self._get_date_range_str(result.start, result.end)
+
+        def fmt_h_m(_time: float) -> str:
+            time_mins = round(_time)
+            hours, minutes = time_mins // 60, time_mins % 60
+            return f'{hours}h {minutes}m'
+
+        print()
+        print(f'Suggested {self.stream} bounty recipients {range_str}')
+        for i, (username, time) in enumerate(top_contributors):
+            print(f'{i + 1}. {username}: {fmt_h_m(time)}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'support-bounty'

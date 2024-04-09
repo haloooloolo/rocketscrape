@@ -84,13 +84,13 @@ class _CacheSegment:
     end: datetime
     messages: dict[int, Message]
 
-    def merge(self, others: list['_CacheSegment']) -> None:
-        self.start = min(self.start, others[0].start)
-        self.end = max(self.end, others[-1].end)
+    def merge(self, others: list['_CacheSegment']) -> '_CacheSegment':
+        start = min(self.start, others[0].start)
+        end = max(self.end, others[-1].end)
+        messages = {}
 
-        other_messages = sum([list(o.messages.values()) for o in others], [])[::-1]
         self_messages = list(self.messages.values())[::-1]
-        self.messages = {}
+        other_messages = sum([list(o.messages.values()) for o in others], [])[::-1]
 
         while self_messages or other_messages:
             if (not self_messages) or (other_messages and (other_messages[-1].created <= self_messages[-1].created)):
@@ -99,7 +99,9 @@ class _CacheSegment:
             else:
                 message = self_messages.pop()
 
-            self.messages[message.id] = message
+            messages[message.id] = message
+
+        return _CacheSegment(start, end, messages)
 
     def __repr__(self) -> str:
         return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
@@ -114,7 +116,7 @@ class _Cache:
         self.channel_id: int = channel.id
         self.__channel_repr: str = str(channel)
         self.segments: list[_CacheSegment] = []
-        self.uncommitted_messages: dict[int, Message] = {}
+        self.__uncommitted_messages: dict[int, Message] = {}
 
         cache_path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         try:
@@ -139,8 +141,8 @@ class _Cache:
         return {k: v for k, v in self.__dict__.items() if k in attributes}
 
     def __getitem__(self, message_id: int) -> Optional[Message]:
-        if message_id in self.uncommitted_messages:
-            return self.uncommitted_messages[message_id]
+        if message_id in self.__uncommitted_messages:
+            return self.__uncommitted_messages[message_id]
 
         for segment in self.segments:
             if message_id in segment.messages:
@@ -148,12 +150,13 @@ class _Cache:
 
         return None
 
-    def add(self, message: Message) -> None:
-        self.uncommitted_messages[message.id] = message
+    def add(self, message: Message) -> int:
+        self.__uncommitted_messages[message.id] = message
+        return len(self.__uncommitted_messages)
 
     def commit(self, start: Optional[datetime], end: datetime) -> None:
-        if self.uncommitted_messages:
-            num_messages = len(self.uncommitted_messages)
+        if self.__uncommitted_messages:
+            num_messages = len(self.__uncommitted_messages)
             channel_name = self.__channel_repr
             logging.info(f'Saving {num_messages} new messages from "{channel_name}" to disk')
 
@@ -171,11 +174,11 @@ class _Cache:
                 high = segment_nr
 
         logging.debug(f'l: {low}, h: {high}, s: {successor}')
-        new_segment = _CacheSegment(start, end, self.uncommitted_messages)
-        self.uncommitted_messages = {}
+        new_segment = _CacheSegment(start, end, self.__uncommitted_messages)
+        self.__uncommitted_messages = {}
 
         if (low is not None) and (high is not None):
-            new_segment.merge(self.segments[low:(high + 1)])
+            new_segment = new_segment.merge(self.segments[low:(high + 1)])
             self.segments = self.segments[:low] + [new_segment] + self.segments[(high + 1):]
         elif successor is not None:
             self.segments.insert(successor, new_segment)
@@ -232,20 +235,18 @@ class SingleChannelMessageStream(MessageStream):
                 _message = Message(_d_msg)
             else:
                 is_stale = (datetime.now(timezone.utc) - _message.created) <= self.refresh_window
-                missing_reactions = (_message.reactions is None) and include_reactions
+                missing_reactions = (_message._reactions is None) and include_reactions
                 if is_stale or missing_reactions:
                     _d_msg = await _message.refresh(self.channel)
 
             if _d_msg:
                 if include_reactions:
                     await _message._fetch_reactions(_d_msg)
-                self.__cache.add(_message)
+                if self.__cache.add(_message) >= self.commit_batch_size:
+                    self.__cache.commit(start, _message.created)
 
             nonlocal last_timestamp
             last_timestamp = _message.created
-
-            if len(self.__cache.uncommitted_messages) >= self.commit_batch_size:
-                self.__cache.commit(start, _message.created)
 
             return _message
 

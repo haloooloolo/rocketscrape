@@ -5,7 +5,7 @@ readme = pathlib.Path(__file__).parent.resolve() / "README.md"
 
 setup(
     name="rocketscrape",
-    version="1.0.0",
+    version="1.1.0",
     description="Discord message stream processing framework",
     long_description=readme.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
