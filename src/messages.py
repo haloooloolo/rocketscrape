@@ -16,6 +16,9 @@ from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
 ChannelType = Union[discord.TextChannel, discord.Thread]
+UserIDType = int
+MessageIDType = int
+ChannelIDType = int
 
 
 @dataclass
@@ -23,23 +26,23 @@ class Message:
     __mention_pattern = re.compile('(?<=<@)[0-9]{18}(?=>)')
 
     def __init__(self, d_msg: discord.Message) -> None:
-        self.id: int = d_msg.id
-        self.channel_id: int = d_msg.channel.id
-        self.author_id: int = d_msg.author.id
+        self.id: MessageIDType = d_msg.id
+        self.channel_id: ChannelIDType = d_msg.channel.id
+        self.author_id: UserIDType = d_msg.author.id
         self.created: datetime = d_msg.created_at
         self.last_edited: Optional[datetime] = d_msg.edited_at
         self.content: str = d_msg.content
-        self.reference: Optional[int] = d_msg.reference.message_id if d_msg.reference else None
+        self.reference: Optional[MessageIDType] = d_msg.reference.message_id if d_msg.reference else None
         self.attachments: list[str] = [a.content_type for a in d_msg.attachments if a.content_type]
         self.embeds: list[dict] = [dict(embed.to_dict()) for embed in d_msg.embeds]
-        self._reactions: Optional[dict[str, set[int]]] = None
+        self._reactions: Optional[dict[str, set[UserIDType]]] = None
 
     @property
-    def reactions(self) -> dict[str, set[int]]:
+    def reactions(self) -> dict[str, set[UserIDType]]:
         return self._reactions or {}
 
     async def _fetch_reactions(self, d_msg: discord.Message) -> None:
-        async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[int]]:
+        async def gather_reactions(_reaction: discord.Reaction) -> tuple[str, set[UserIDType]]:
             return str(_reaction.emoji), {member.id async for member in _reaction.users()}
 
         self._reactions = {}
@@ -61,9 +64,9 @@ class Message:
             return None
 
     @property
-    def mentions(self) -> set[int]:
+    def mentions(self) -> set[UserIDType]:
         matches = self.__mention_pattern.findall(self.content)
-        return {int(match) for match in matches}
+        return {UserIDType(match) for match in matches}
 
     def __eq__(self, other) -> bool:
         return self.id == other.id
@@ -82,7 +85,7 @@ class Message:
 class _CacheSegment:
     start: datetime
     end: datetime
-    messages: dict[int, Message]
+    messages: dict[MessageIDType, Message]
 
     def merge(self, others: list['_CacheSegment']) -> '_CacheSegment':
         start = min(self.start, others[0].start)
@@ -113,10 +116,10 @@ class _Cache:
     def __init__(self, cache_dir: str, channel: ChannelType):
         self.version: int = self.LATEST_VERSION
         self.cache_dir: str = cache_dir
-        self.channel_id: int = channel.id
+        self.channel_id: ChannelIDType = channel.id
         self.__channel_repr: str = str(channel)
         self.segments: list[_CacheSegment] = []
-        self.__uncommitted_messages: dict[int, Message] = {}
+        self.__uncommitted_messages: dict[MessageIDType, Message] = {}
 
         cache_path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         try:
@@ -140,7 +143,7 @@ class _Cache:
         attributes = {'version', 'channel_id', 'segments'}
         return {k: v for k, v in self.__dict__.items() if k in attributes}
 
-    def __getitem__(self, message_id: int) -> Optional[Message]:
+    def __getitem__(self, message_id: MessageIDType) -> Optional[Message]:
         if message_id in self.__uncommitted_messages:
             return self.__uncommitted_messages[message_id]
 
@@ -163,7 +166,7 @@ class _Cache:
         logging.debug(f'start: {start}, end: {end}')
         logging.debug(str(self.segments))
 
-        start = start or datetime.fromtimestamp(0).replace(tzinfo=timezone.utc)
+        start = start or datetime.fromtimestamp(0, timezone.utc)
         low, high, successor = None, None, None
 
         for segment_nr, segment in enumerate(self.segments):
@@ -194,13 +197,13 @@ class _Cache:
 
 
 class MessageStream(ABC):
-    def get_message(self, message_id: Optional[int]) -> Optional[Message]:
+    def get_message(self, message_id: Optional[MessageIDType]) -> Optional[Message]:
         if message_id is None:
             return None
         return self._get_message(message_id)
 
     @abstractmethod
-    def _get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
         pass
 
     @abstractmethod
@@ -220,8 +223,21 @@ class SingleChannelMessageStream(MessageStream):
         self.commit_batch_size = commit_batch_size
         self.__cache = _Cache(cache_dir, channel)
 
-    def _get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
         return self.__cache[message_id]
+
+    async def __fetch_history(self, start: Optional[datetime],
+                              end: Optional[datetime]) -> AsyncIterator[discord.Message]:
+        # try to avoid actual fetch if possible
+        if start:
+            if end and end <= start:
+                return
+            if isinstance(self.channel, discord.Thread) and self.channel.archived:
+                if self.channel.archive_timestamp <= start:
+                    return
+
+        async for d_msg in self.channel.history(limit=None, after=start, before=end, oldest_first=True):
+            yield d_msg
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime],
                           include_reactions=True) -> AsyncIterator[Message]:
@@ -256,8 +272,7 @@ class SingleChannelMessageStream(MessageStream):
                 continue
 
             # fill gap between last retrieved message and start of this interval
-            async for d_msg in self.channel.history(limit=None, after=last_timestamp,
-                                                    before=segment.start, oldest_first=True):
+            async for d_msg in self.__fetch_history(last_timestamp, segment.start):
                 message = await handle_message(d_msg)
                 if end and message.created > end:
                     self.__cache.commit(start, message.created)
@@ -275,7 +290,7 @@ class SingleChannelMessageStream(MessageStream):
 
         try:
             # fill gap between last segment end of requested interval
-            async for d_msg in self.channel.history(limit=None, after=last_timestamp, before=end, oldest_first=True):
+            async for d_msg in self.__fetch_history(last_timestamp, end):
                 yield await handle_message(d_msg)
 
             if last_timestamp is not None:
@@ -302,7 +317,7 @@ class MultiChannelMessageStream(MessageStream):
         suffix = '+' if include_threads else ''
         self.__repr = f'({", ".join([str(s) for s in self.streams])}){suffix}'
 
-    def _get_message(self, message_id: int) -> Optional[Message]:
+    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
         for stream in self.streams:
             if message := stream.get_message(message_id):
                 return message
