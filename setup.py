@@ -14,7 +14,7 @@ setup(
     packages=find_packages(where="src"),
     python_requires=">=3.9, <4",
     install_requires=[
-        "discord.py-self @ git+https://github.com/dolfies/discord.py-self.git",
+        "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
         "matplotlib",
         "tqdm",
         "tabulate",

@@ -410,8 +410,9 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
             return
 
         mentions: set[UserIDType] = message.mentions
-        if replied_to := self.stream.get_message(message.reference):
-            mentions.add(replied_to.author_id)
+        if message.reference:
+            if replied_to := self.stream.get_message(message.reference):
+                mentions.add(replied_to.author_id)
 
         for user_id in mentions:
             self.count[user_id] = self.count.get(user_id, 0) + 1

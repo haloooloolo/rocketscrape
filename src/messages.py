@@ -106,6 +106,9 @@ class _CacheSegment:
 
         return _CacheSegment(start, end, messages)
 
+    def __len__(self) -> int:
+        return len(self.messages)
+
     def __repr__(self) -> str:
         return f'{{{self.start}, {self.end}, [{len(self.messages)}]}}'
 
@@ -113,13 +116,15 @@ class _CacheSegment:
 class _Cache:
     LATEST_VERSION = 1
 
-    def __init__(self, cache_dir: str, channel: ChannelType):
+    def __init__(self, cache_dir: str, channel: ChannelType, max_commit_size: int):
         self.version: int = self.LATEST_VERSION
         self.cache_dir: str = cache_dir
         self.channel_id: ChannelIDType = channel.id
         self.__channel_repr: str = str(channel)
         self.segments: list[_CacheSegment] = []
         self.__uncommitted_messages: dict[MessageIDType, Message] = {}
+        self.min_commit_size = 25
+        self.max_commit_size = max_commit_size
 
         cache_path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         try:
@@ -133,6 +138,9 @@ class _Cache:
                 os.remove(cache_path)
         except (FileNotFoundError, EOFError):
             pass
+
+        # checking for size is expensive and it only changes on commit
+        self.__len = sum((len(s) for s in self.segments))
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, _Cache):
@@ -153,9 +161,21 @@ class _Cache:
 
         return None
 
-    def add(self, message: Message) -> int:
+    def __len__(self) -> int:
+        return self.__len
+
+    def add(self, message: Message) -> None:
         self.__uncommitted_messages[message.id] = message
-        return len(self.__uncommitted_messages)
+
+    def commit_maybe(self, start: Optional[datetime], end: datetime) -> bool:
+        num_messages = len(self.__uncommitted_messages)
+        if num_messages < self.min_commit_size:
+            return False
+        if (num_messages < len(self)) and (num_messages < self.max_commit_size):
+            return False
+
+        self.commit(start, end)
+        return True
 
     def commit(self, start: Optional[datetime], end: datetime) -> None:
         if self.__uncommitted_messages:
@@ -188,6 +208,8 @@ class _Cache:
         else:
             self.segments.append(new_segment)
 
+        self.__len = sum((len(s) for s in self.segments))
+
         os.makedirs(self.cache_dir, exist_ok=True)
         path = os.path.join(self.cache_dir, f'{self.channel_id}.pkl')
         logging.debug(str(self.segments))
@@ -197,13 +219,8 @@ class _Cache:
 
 
 class MessageStream(ABC):
-    def get_message(self, message_id: Optional[MessageIDType]) -> Optional[Message]:
-        if message_id is None:
-            return None
-        return self._get_message(message_id)
-
     @abstractmethod
-    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
         pass
 
     @abstractmethod
@@ -213,28 +230,26 @@ class MessageStream(ABC):
 
 
 class SingleChannelMessageStream(MessageStream):
-    def __init__(self,
-                 channel: ChannelType,
-                 cache_dir: str,
-                 refresh_window: int,
-                 commit_batch_size: int) -> None:
+    def __init__(self, channel: ChannelType, cache_dir: str,
+                 refresh_window: int, commit_batch_size: int) -> None:
         self.channel = channel
         self.refresh_window = timedelta(hours=refresh_window)
-        self.commit_batch_size = commit_batch_size
-        self.__cache = _Cache(cache_dir, channel)
+        self.__cache = _Cache(cache_dir, channel, commit_batch_size)
 
-    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
         return self.__cache[message_id]
 
     async def __fetch_history(self, start: Optional[datetime],
                               end: Optional[datetime]) -> AsyncIterator[discord.Message]:
-        # try to avoid actual fetch if possible
+        # avoid expensive fetch if output will be empty
         if start:
             if end and end <= start:
                 return
             if isinstance(self.channel, discord.Thread) and self.channel.archived:
                 if self.channel.archive_timestamp <= start:
                     return
+        elif end and end.timestamp() <= 0:
+            return
 
         async for d_msg in self.channel.history(limit=None, after=start, before=end, oldest_first=True):
             yield d_msg
@@ -258,8 +273,8 @@ class SingleChannelMessageStream(MessageStream):
             if _d_msg:
                 if include_reactions:
                     await _message._fetch_reactions(_d_msg)
-                if self.__cache.add(_message) >= self.commit_batch_size:
-                    self.__cache.commit(start, _message.created)
+                self.__cache.add(_message)
+                self.__cache.commit_maybe(start, _message.created)
 
             nonlocal last_timestamp
             last_timestamp = _message.created
@@ -317,7 +332,7 @@ class MultiChannelMessageStream(MessageStream):
         suffix = '+' if include_threads else ''
         self.__repr = f'({", ".join([str(s) for s in self.streams])}){suffix}'
 
-    def _get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
         for stream in self.streams:
             if message := stream.get_message(message_id):
                 return message
