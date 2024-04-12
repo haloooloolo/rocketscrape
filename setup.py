@@ -16,7 +16,8 @@ setup(
     install_requires=[
         "discord.py-self @ git+https://github.com/dolfies/discord.py-self.git",
         "matplotlib",
-        "tqdm"
+        "tqdm",
+        "tabulate",
     ],
     entry_points={
         'console_scripts': [

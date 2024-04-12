@@ -1,17 +1,19 @@
 import logging
 import heapq
 import re
-from dataclasses import dataclass
+import rocketscrape
 
-from abc import ABC, abstractmethod
-from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable
-from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 
-import rocketscrape
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable
+from datetime import datetime, timedelta
+from tabulate import tabulate
+
 from client import Client
-from messages import MessageStream, Message
+from messages import MessageStream, Message, UserIDType
 
 T = TypeVar('T')
 
@@ -117,20 +119,20 @@ class MessageAnalysis(ABC, Generic[T]):
 
 class CountBasedMessageAnalysis(MessageAnalysis):
     def _prepare(self) -> None:
-        self.count: dict[int, int] = {}
+        self.count: dict[UserIDType, int] = {}
 
     @abstractmethod
     def _on_message(self, message: Message) -> None:
         pass
 
-    def _finalize(self) -> dict[int, int]:
+    def _finalize(self) -> dict[UserIDType, int]:
         return self.count
 
     @abstractmethod
     def _title(self) -> str:
         pass
 
-    async def _display_result(self, result: Result[dict[int, int]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[UserIDType, int]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_users = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
@@ -162,15 +164,15 @@ class TopContributorAnalysis(MessageAnalysis):
         return td / timedelta(minutes=1)
 
     def _prepare(self) -> None:
-        self.open_sessions: dict[int, tuple[datetime, datetime]] = {}
-        self.total_time: dict[int, float] = {}
+        self.open_sessions: dict[UserIDType, tuple[datetime, datetime]] = {}
+        self.total_time: dict[UserIDType, float] = {}
 
     def _get_session_time(self, start: datetime, end: datetime) -> float:
         return self.__to_minutes(end - start) + self.base_session_time
 
-    def _close_session(self, author_id: int, start: datetime, end: datetime) -> None:
+    def _close_session(self, author_id: UserIDType, start: datetime, end: datetime) -> None:
         session_time = self._get_session_time(start, end)
-        self.total_time[author_id] = self.total_time.get(author_id, 0) + session_time
+        self.total_time[author_id] = self.total_time.get(author_id, 0.0) + session_time
 
     def _on_message(self, message: Message) -> None:
         timestamp = message.created
@@ -184,14 +186,14 @@ class TopContributorAnalysis(MessageAnalysis):
             self._close_session(author_id, session_start, session_end)
             del self.open_sessions[author_id]
 
-    def _finalize(self) -> dict[int, float]:
+    def _finalize(self) -> dict[UserIDType, float]:
         # end remaining sessions
         for author_id, (session_start, session_end) in self.open_sessions.items():
             self._close_session(author_id, session_start, session_end)
 
         return self.total_time
 
-    async def _display_result(self, result: Result[dict[int, float]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
@@ -226,7 +228,7 @@ class ContributorHistoryAnalysis(MessageAnalysis):
     def _prepare(self) -> None:
         self.__contributor_analysis._prepare()
         self.x: list[datetime] = []
-        self.y: dict[int, list[float]] = {}
+        self.y: dict[UserIDType, list[float]] = {}
         self.next_date: Optional[datetime] = None
         self.last_ts: Optional[datetime] = None
 
@@ -250,13 +252,13 @@ class ContributorHistoryAnalysis(MessageAnalysis):
         self.__add_snapshot(self.next_date)
         self.next_date += self.interval
 
-    def _finalize(self) -> tuple[list[datetime], dict[int, list[float]]]:
+    def _finalize(self) -> tuple[list[datetime], dict[UserIDType, list[float]]]:
         self.__contributor_analysis._finalize()
         if self.last_ts:
             self.__add_snapshot(self.last_ts)
         return self.x, self.y
 
-    async def _display_result(self, result: Result[tuple[list[datetime], dict[int, list[float]]]],
+    async def _display_result(self, result: Result[tuple[list[datetime], dict[UserIDType, list[float]]]],
                               client: Client, max_results: int) -> None:
         x, y = result.data
         for user_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:max_results]:
@@ -326,7 +328,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
     def _prepare(self) -> None:
         super()._prepare()
-        self.last_seen: dict[int, datetime] = {}
+        self.last_seen: dict[UserIDType, datetime] = {}
         self.last_ts: Optional[datetime] = None
 
     def _on_message(self, message: Message) -> None:
@@ -334,7 +336,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         self.last_ts = message.created
         self.last_seen[message.author_id] = message.created
 
-    def _finalize(self) -> dict[int, float]:
+    def _finalize(self) -> dict[UserIDType, float]:
         total_time = super()._finalize()
         for author_id, ts in self.last_seen.items():
             assert self.last_ts is not None
@@ -343,8 +345,8 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
         return total_time
 
-    async def present(self, result: dict[int, float], client: Client, args) -> None:
-        top_contributors = heapq.nlargest(args.max_results, result.items(), key=lambda a: a[1])
+    async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, args) -> None:
+        top_contributors = heapq.nlargest(args.max_results, result.data.items(), key=lambda a: a[1])
 
         print()
         print(f'Top {self.stream} contributors with no recent activity ')
@@ -396,7 +398,7 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.__pattern = re.compile('((^| |\n)(ty)( |$|\n|.|!))|(thank(s| you)?)|(thx)')
+        self.__pattern = re.compile('\b(ty)|(thank(?:s| (?:yo)?u)?)|(thx)\b')
 
     @property
     def _require_reactions(self) -> bool:
@@ -407,7 +409,7 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
         if not self.__pattern.search(content):
             return
 
-        mentions = message.mentions
+        mentions: set[UserIDType] = message.mentions
         if replied_to := self.stream.get_message(message.reference):
             mentions.add(replied_to.author_id)
 
@@ -480,7 +482,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 class ActivityTimeAnalyis(MessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.user: int = args.user
+        self.user: UserIDType = args.user
         self.num_buckets: int = args.num_buckets
         assert (24 * 60 % self.num_buckets) == 0, \
             'bucket count doesn\'t cleanly divide into minutes'
@@ -489,7 +491,7 @@ class ActivityTimeAnalyis(MessageAnalysis):
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return MessageAnalysis.custom_args() + (
-            CustomArgument('user', int),
+            CustomArgument('user', UserIDType),
             CustomOption('num-buckets', int, 24),
             CustomOption('key-format', str, '',
                          'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
@@ -611,74 +613,84 @@ class SupportBountyAnalysis(TopContributorAnalysis):
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return TopContributorAnalysis.custom_args() + (
-            CustomOption('min-monthly-activity', int, 60),
+            CustomOption('min-monthly-activity', int, 60,
+                         'minimum required activity per month in minutes'),
         )
 
     def _prepare(self) -> None:
-        self.open_sessions: dict[int, tuple[datetime, datetime]] = {}
-        self.time_by_month: dict[tuple[int, int], dict[int, float]] = {}
+        self.open_sessions: dict[UserIDType, tuple[datetime, datetime]] = {}
+        self.time_by_month: dict[tuple[int, int], dict[UserIDType, float]] = {}
 
-    def _close_session(self, author_id: int, start: datetime, end: datetime) -> None:
+    def _close_session(self, author_id: UserIDType, start: datetime, end: datetime) -> None:
         session_time = self._get_session_time(start, end)
         month = (end.month, end.year)
         if month not in self.time_by_month:
             self.time_by_month[month] = {}
         self.time_by_month[month][author_id] = self.time_by_month[month].get(author_id, 0) + session_time
 
-    def _finalize(self) -> dict[int, float]:
+    def _finalize(self) -> dict[tuple[int, int], dict[UserIDType, float]]:
         for author_id, (session_start, session_end) in self.open_sessions.items():
             self._close_session(author_id, session_start, session_end)
+        return self.time_by_month
 
-        total_time: dict[int, float] = {}
-        participation_count: dict[int, int] = {}
+    async def _display_result(self, result: Result[dict[tuple[int, int], dict[UserIDType, float]]],
+                              client: Client, max_results: int) -> None:
+        exclusion_list: set[UserIDType] = set()
 
-        for monthly_data in self.time_by_month.values():
-            for author_id, time in monthly_data.items():
-                if time >= self.min_monthly_activity:
-                    participation_count[author_id] = participation_count.get(author_id, 0) + 1
-                    total_time[author_id] = total_time.get(author_id, 0) + time
-
-        for author_id in list(total_time.keys()):
-            if participation_count[author_id] < len(self.time_by_month):
-                del total_time[author_id]
-
-        return total_time
-
-    async def _display_result(self, result: Result[dict[int, float]], client: Client, max_results: int) -> None:
         team_role_id = 405169632195117078
-        core_team_role = await client.try_fetch_role(team_role_id, rocketscrape.Server.rocketpool)
-
-        if core_team_role is not None:
+        if core_team_role := await client.try_fetch_role(team_role_id, rocketscrape.Server.rocketpool):
             team_members = {member.id for member in await core_team_role.fetch_members()}
+            exclusion_list.update(team_members)
         else:
             logging.warning(f'Could not fetch Rocket Pool team members (role id {team_role_id})')
-            team_members = set()
-
-        contributors: list[tuple[str, float]] = []
 
         def user_eligible(_user) -> bool:
             if _user is None:
                 return True
-            return not (_user.bot or (_user.id in team_members))
+            return not (_user.bot or (_user.id in exclusion_list))
 
-        for user_id, time in result.data.items():
+        time_by_user: dict[UserIDType, dict[tuple[int, int], float]] = {}
+
+        for month, users in result.data.items():
+            for user_id, time in users.items():
+                if user_id not in time_by_user:
+                    time_by_user[user_id] = {}
+                time_by_user[user_id][month] = time
+
+        months: list[tuple[int, int]] = list(result.data.keys())
+        headers = ['user', 'total'] + [f'{m:02}/{y}' for (m, y) in months]
+        contributors: list[tuple[str, list[float]]] = []
+
+        for user_id, monthly_data in time_by_user.items():
+            total_time = sum(monthly_data.values())
+            monthly_times = np.array([monthly_data.get(m, 0.0) for m in months])
+            if total_time < 60 * len(months):
+                continue
+
             user = await client.try_fetch_user(user_id)
-            if user_eligible(user):
-                username = await client.try_fetch_username(user or user_id)
-                contributors.append((username, time))
+            if not user_eligible(user):
+                continue
 
-        top_contributors = heapq.nlargest(max_results, contributors, key=lambda a: a[1])
-        range_str = self._get_date_range_str(result.start, result.end)
+            username = await client.try_fetch_username(user or user_id)
+            if not ((total_time >= 300 * len(months)) or all(monthly_times >= self.min_monthly_activity)):
+                username = '* ' + username
+
+            row = (username, [total_time] + list(monthly_times))
+            contributors.append(row)
 
         def fmt_h_m(_time: float) -> str:
             time_mins = round(_time)
             hours, minutes = time_mins // 60, time_mins % 60
-            return f'{hours}h {minutes}m'
+            return f'{hours}h {minutes:02}m'
+
+        table = []
+        for row in heapq.nlargest(max_results, contributors, key=lambda a: a[1]):
+            name, times = row
+            table.append([name] + [fmt_h_m(t) for t in times])
 
         print()
-        print(f'Suggested {self.stream} bounty recipients {range_str}')
-        for i, (username, time) in enumerate(top_contributors):
-            print(f'{i + 1}. {username}: {fmt_h_m(time)}')
+        print(tabulate(table, headers=headers, colalign=('left',), stralign='right'))
+        print()
 
     @staticmethod
     def subcommand() -> str:
