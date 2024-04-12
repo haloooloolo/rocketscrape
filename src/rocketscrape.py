@@ -151,10 +151,11 @@ def parse_args():
 
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
     for cls in get_subclasses(base_cls):
-        subparser = subparsers.add_parser(cls.subcommand())
-        subparser.set_defaults(analysis=cls)
-        for arg in cls.custom_args():
-            add_custom_arg(subparser, arg)
+        if subcommand := cls.subcommand():
+            subparser = subparsers.add_parser(subcommand)
+            subparser.set_defaults(analysis=cls)
+            for arg in cls.custom_args():
+                add_custom_arg(subparser, arg)
 
     return parser.parse_args()
 

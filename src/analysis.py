@@ -605,33 +605,48 @@ class WordCountAnalysis(MessageAnalysis):
         return 'word-count'
 
 
-class SupportBountyAnalysis(TopContributorAnalysis):
+class SupportBountyAnalysis(MessageAnalysis):
+    class __SupportBountyHelper(TopContributorAnalysis):
+        def _prepare(self) -> None:
+            super()._prepare()
+            self.time_by_month: dict[tuple[int, int], dict[UserIDType, float]] = {}
+
+        def _close_session(self, author_id: UserIDType, start: datetime, end: datetime) -> None:
+            session_time = self._get_session_time(start, end)
+            month = (end.month, end.year)
+            if month not in self.time_by_month:
+                self.time_by_month[month] = {}
+            self.time_by_month[month][author_id] = self.time_by_month[month].get(author_id, 0) + session_time
+
+        @staticmethod
+        def subcommand() -> str:
+            return ''
+
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.min_monthly_activity = args.min_monthly_activity
+        self.__helper = self.__SupportBountyHelper(stream, args)
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
 
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + (
+        return cls.__SupportBountyHelper.custom_args() + (
             CustomOption('min-monthly-activity', int, 60,
                          'minimum required activity per month in minutes'),
         )
 
     def _prepare(self) -> None:
-        self.open_sessions: dict[UserIDType, tuple[datetime, datetime]] = {}
-        self.time_by_month: dict[tuple[int, int], dict[UserIDType, float]] = {}
+        self.__helper._prepare()
 
-    def _close_session(self, author_id: UserIDType, start: datetime, end: datetime) -> None:
-        session_time = self._get_session_time(start, end)
-        month = (end.month, end.year)
-        if month not in self.time_by_month:
-            self.time_by_month[month] = {}
-        self.time_by_month[month][author_id] = self.time_by_month[month].get(author_id, 0) + session_time
+    def _on_message(self, message: Message) -> None:
+        self.__helper._on_message(message)
 
     def _finalize(self) -> dict[tuple[int, int], dict[UserIDType, float]]:
-        for author_id, (session_start, session_end) in self.open_sessions.items():
-            self._close_session(author_id, session_start, session_end)
-        return self.time_by_month
+        self.__helper._finalize()
+        return self.__helper.time_by_month
 
     async def _display_result(self, result: Result[dict[tuple[int, int], dict[UserIDType, float]]],
                               client: Client, max_results: int) -> None:
