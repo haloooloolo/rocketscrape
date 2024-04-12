@@ -678,8 +678,8 @@ class SupportBountyAnalysis(MessageAnalysis):
 
         for user_id, monthly_data in time_by_user.items():
             total_time = sum(monthly_data.values())
-            monthly_times = np.array([monthly_data.get(m, 0.0) for m in months])
-            if total_time < 60 * len(months):
+            monthly_times = [monthly_data.get(m, 0.0) for m in months]
+            if total_time < self.min_monthly_activity * len(months):
                 continue
 
             user = await client.try_fetch_user(user_id)
@@ -687,10 +687,10 @@ class SupportBountyAnalysis(MessageAnalysis):
                 continue
 
             username = await client.try_fetch_username(user or user_id)
-            if not ((total_time >= 300 * len(months)) or all(monthly_times >= self.min_monthly_activity)):
+            if (total_time < 300 * len(months)) and any((t < self.min_monthly_activity for t in monthly_times)):
                 username = '* ' + username
 
-            row = (username, [total_time] + list(monthly_times))
+            row = (username, [total_time] + monthly_times)
             contributors.append(row)
 
         def fmt_h_m(_time: float) -> str:
