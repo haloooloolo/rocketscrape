@@ -85,6 +85,7 @@ async def _main(client) -> int:
     try:
         analysis = args.analysis(stream, args)
         result = await analysis.run(args.start, args.end)
+        print()  # some spacing to make it look nicer
         await result.display(client, args.max_results)
     except Exception as exc:
         logging.exception(str(exc))

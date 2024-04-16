@@ -1,6 +1,8 @@
 import logging
 import heapq
 import re
+
+import discord
 import rocketscrape
 
 import matplotlib.pyplot as plt
@@ -13,7 +15,7 @@ from datetime import datetime, timedelta
 from tabulate import tabulate
 
 from client import Client
-from messages import MessageStream, Message, UserIDType
+from messages import MessageStream, Message, UserIDType, ChannelIDType
 
 T = TypeVar('T')
 
@@ -136,7 +138,6 @@ class CountBasedMessageAnalysis(MessageAnalysis):
         range_str = self._get_date_range_str(result.start, result.end)
         top_users = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print()
         print(f'{self._title()} {range_str}')
         for i, (user_id, count) in enumerate(top_users):
             print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {count}')
@@ -197,7 +198,6 @@ class TopContributorAnalysis(MessageAnalysis):
         range_str = self._get_date_range_str(result.start, result.end)
         top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print()
         print(f'Top {self.stream} contributors {range_str}')
         for i, (user_id, time) in enumerate(top_contributors):
             time_mins = round(time)
@@ -213,13 +213,11 @@ class ContributorHistoryAnalysis(MessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.__contributor_analysis = TopContributorAnalysis(stream, args)
-        self.interval = timedelta(days=args.snapshot_interval)
+        self.interval = timedelta(days=1)
 
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + (
-            CustomOption('snapshot-interval', int, 7, 'time between data snapshots in days'),
-        )
+        return TopContributorAnalysis.custom_args()
 
     @property
     def _require_reactions(self) -> bool:
@@ -348,7 +346,6 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, args) -> None:
         top_contributors = heapq.nlargest(args.max_results, result.data.items(), key=lambda a: a[1])
 
-        print()
         print(f'Top {self.stream} contributors with no recent activity ')
         for i, (author_id, time) in enumerate(top_contributors):
             time_mins = round(time)
@@ -598,7 +595,6 @@ class WordCountAnalysis(MessageAnalysis):
 
     async def _display_result(self, result: Result[int], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
-        print('')
         print(f'{result.data} occurrences of "{self.word}" in {self.stream} {range_str}')
 
     @staticmethod
@@ -704,10 +700,111 @@ class SupportBountyAnalysis(MessageAnalysis):
             name, times = row
             table.append([name] + [fmt_h_m(t) for t in times])
 
-        print()
         print(tabulate(table, headers=headers, colalign=('left',), stralign='right'))
-        print()
 
     @staticmethod
     def subcommand() -> str:
         return 'support-bounty'
+
+
+class ThreadListAnalysis(MessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.user_id: UserIDType = args.user
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return MessageAnalysis.custom_args() + (
+            CustomArgument('user', UserIDType),
+        )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.channel_ids: set[ChannelIDType] = set()
+
+    def _on_message(self, message: Message) -> None:
+        if message.author_id == self.user_id:
+            self.channel_ids.add(message.channel_id)
+
+    def _finalize(self) -> set[ChannelIDType]:
+        return self.channel_ids
+
+    async def _display_result(self, result: Result[set[ChannelIDType]], client: Client, max_results: int) -> None:
+        server_id = rocketscrape.Server.rocketpool.value
+        for channel_id in result.data:
+            channel = await client.try_fetch_channel(channel_id)
+            if isinstance(channel, discord.Thread):
+                print(f'https://discord.com/channels/{server_id}/{channel_id}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'thread-list'
+
+
+class TimeToThresholdAnalysis(MessageAnalysis):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.__analysis = TopContributorAnalysis(stream, args)
+        self.threshold = args.time_threshold
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return TopContributorAnalysis.custom_args() + (
+            CustomOption('time-threshold', int, 50_000),
+        )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.__analysis._prepare()
+        self.y: dict[UserIDType, list[float]] = {}
+        self.next_date: Optional[datetime] = None
+        self.last_ts: Optional[datetime] = None
+
+    def __add_snapshot(self) -> None:
+        for author, time in self.__analysis.total_time.items():
+            if author not in self.y:
+                self.y[author] = [0.0]
+            if self.y[author][-1] < self.threshold:
+                self.y[author].append(min(time, self.threshold))
+
+    def _on_message(self, message: Message) -> None:
+        self.__analysis._on_message(message)
+        self.last_ts = message.created
+
+        if self.next_date is None:
+            self.next_date = message.created
+        elif message.created < self.next_date:
+            return
+
+        self.__add_snapshot()
+        self.next_date += timedelta(days=1)
+
+    def _finalize(self) -> dict[UserIDType, list[float]]:
+        self.__analysis._finalize()
+        return self.y
+
+    async def _display_result(self, result: Result[dict[UserIDType, list[int]]],
+                              client: Client, max_results: int) -> None:
+        y = {u: d for (u, d) in result.data.items() if d[-1] >= self.threshold}
+
+        for user_id, data in sorted(y.items(), key=lambda a: len(a[1]))[:max_results]:
+            username = await client.try_fetch_username(user_id)
+            plt.plot(np.arange(len(data)), np.array(data), label=username
+                     .encode('ascii', 'ignore').decode('ascii'))
+
+        plt.xlabel('days')
+        plt.ylabel('time (mins)')
+        plt.legend()
+        plt.title(f'Fastest {self.stream} contributors to reach {self.threshold:,} minutes'
+                  .encode('ascii', 'ignore').decode('ascii'))
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'days-to-threshold'
