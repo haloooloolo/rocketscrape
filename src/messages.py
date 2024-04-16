@@ -31,9 +31,10 @@ class Message:
         self.author_id: UserIDType = d_msg.author.id
         self.created: datetime = d_msg.created_at
         self.last_edited: Optional[datetime] = d_msg.edited_at
+        self.updated: datetime = datetime.now(timezone.utc)
         self.content: str = d_msg.content
-        self.reference: Optional[MessageIDType] = d_msg.reference.message_id if d_msg.reference else None
-        self.attachments: list[str] = [a.content_type for a in d_msg.attachments if a.content_type]
+        self.reference: Optional[MessageIDType] = (d_msg.reference.message_id if d_msg.reference else None)
+        self.attachments: list[str] = [a.url for a in d_msg.attachments]
         self.embeds: list[dict] = [dict(embed.to_dict()) for embed in d_msg.embeds]
         self._reactions: Optional[dict[str, set[UserIDType]]] = None
 
@@ -60,7 +61,7 @@ class Message:
             self.__dict__.update((Message(d_msg)).__dict__)
             return d_msg
         except discord.NotFound:
-            logging.warning(f'Failed to refresh message, ID {self.id} no longer exists')
+            logging.warning(f'Failed to refresh message {self.id}, ID no longer exists')
             return None
 
     @property
@@ -114,7 +115,7 @@ class _CacheSegment:
 
 
 class _Cache:
-    LATEST_VERSION = 1
+    LATEST_VERSION = 2
 
     def __init__(self, cache_dir: str, channel: ChannelType, max_commit_size: int):
         self.version: int = self.LATEST_VERSION
@@ -133,8 +134,8 @@ class _Cache:
             if self == cache:
                 self.segments = cache.segments
             else:
-                logging.warning(f'''Found mismatched message cache version for
-                    "{self.__channel_repr}", dropping data''')
+                logging.warning(f'Found mismatched message cache version for ' +
+                                f'"{self.__channel_repr}", dropping data')
                 os.remove(cache_path)
         except (FileNotFoundError, EOFError):
             pass
@@ -191,7 +192,7 @@ class _Cache:
 
         for segment_nr, segment in enumerate(self.segments):
             if end < segment.start:  # new segment precedes this one
-                successor = segment_nr
+                successor = segment_nr if (successor is None) else successor
             elif start <= segment.end:  # segments overlap
                 low = segment_nr if (low is None) else low
                 high = segment_nr
@@ -203,6 +204,9 @@ class _Cache:
         if (low is not None) and (high is not None):
             new_segment = new_segment.merge(self.segments[low:(high + 1)])
             self.segments = self.segments[:low] + [new_segment] + self.segments[(high + 1):]
+        elif len(new_segment) == 0:
+            logging.debug('empty new cache segment, skipping commit')
+            return
         elif successor is not None:
             self.segments.insert(successor, new_segment)
         else:
@@ -265,7 +269,8 @@ class SingleChannelMessageStream(MessageStream):
                 _d_msg = _message
                 _message = Message(_d_msg)
             else:
-                is_stale = (datetime.now(timezone.utc) - _message.created) <= self.refresh_window
+                last_change = _message.last_edited or _message.created
+                is_stale = (_message.updated - last_change) <= self.refresh_window
                 missing_reactions = (_message._reactions is None) and include_reactions
                 if is_stale or missing_reactions:
                     _d_msg = await _message.refresh(self.channel)

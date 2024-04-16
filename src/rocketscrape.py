@@ -126,14 +126,14 @@ def parse_args():
                         help='start of date range in ISO format')
     parser.add_argument('-e', '--end', type=datetime.fromisoformat,
                         help='end of date range in ISO format')
-    parser.add_argument('-r', '--max-results', type=int, default=25,
+    parser.add_argument('-r', '--max-results', type=int, default=10,
                         help='maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
     parser.add_argument('--cache-dir', type=str, default=(root_dir/'cache'),
                         help='directory to store the message cache in')
     parser.add_argument('--refresh-window', type=int, default=1,
-                        help='width of window (in hours) in which message data will be refreshed despite being cached')
+                        help='messages last ')
     parser.add_argument('--commit-batch-size', type=int, default=2500,
                         help='maximum number of new messages that will be committed to disk at once')
 
