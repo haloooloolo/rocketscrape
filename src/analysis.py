@@ -121,7 +121,7 @@ class MessageAnalysis(ABC, Generic[T]):
         return ()
 
 
-class CountBasedMessageAnalysis(MessageAnalysis):
+class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
     def _prepare(self) -> None:
         self.count: dict[UserIDType, int] = {}
 
@@ -148,7 +148,7 @@ class CountBasedMessageAnalysis(MessageAnalysis):
 S = TypeVar('S', bound=MessageAnalysis)
 
 
-class HistoryBasedMessageAnalysis(MessageAnalysis, Generic[S, T]):
+class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S, T]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self._base_analysis = self._base_analysis_class()(stream, args)
@@ -928,7 +928,7 @@ class WickPenaltyHistoryAnalysis(
     def _get_data(self) -> tuple[int, int]:
         return self._base_analysis.bans, self._base_analysis.timeouts
 
-    async def _display_result(self, result: Result[tuple[list[datetime], tuple[int, int]]],
+    async def _display_result(self, result: Result[tuple[list[datetime], list[tuple[int, int]]]],
                               client: Client, max_results: int) -> None:
         x, y = result.data
         x_arr, y_arr = np.array(x), np.array(y)
