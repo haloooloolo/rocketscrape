@@ -148,7 +148,7 @@ class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
 S = TypeVar('S', bound=MessageAnalysis)
 
 
-class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S, T]):
+class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S[T], T]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self._base_analysis = self._base_analysis_class()(stream, args)
@@ -202,7 +202,7 @@ class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]
         return self.x, self.y
 
 
-class TopContributorAnalysis(MessageAnalysis):
+class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
     def __init__(self, stream, args):
         super().__init__(stream, args)
         self.base_session_time = args.base_session_time
@@ -505,7 +505,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
         return 'reaction-given-count'
 
 
-class ActivityTimeAnalyis(MessageAnalysis):
+class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.user: UserIDType = args.user
@@ -590,7 +590,7 @@ class ActivityTimeAnalyis(MessageAnalysis):
         return 'message-time-histogram'
 
 
-class WordCountAnalysis(MessageAnalysis):
+class WordCountAnalysis(MessageAnalysis[int]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.word: str = args.word
@@ -630,7 +630,7 @@ class WordCountAnalysis(MessageAnalysis):
         return 'word-count'
 
 
-class SupportBountyAnalysis(MessageAnalysis):
+class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDType, float]]]):
     class __SupportBountyHelper(TopContributorAnalysis):
         def _prepare(self) -> None:
             super()._prepare()
@@ -735,7 +735,7 @@ class SupportBountyAnalysis(MessageAnalysis):
         return 'support-bounty'
 
 
-class ThreadListAnalysis(MessageAnalysis):
+class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.user_id: UserIDType = args.user
@@ -772,7 +772,7 @@ class ThreadListAnalysis(MessageAnalysis):
         return 'thread-list'
 
 
-class TimeToThresholdAnalysis(MessageAnalysis):
+class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.__analysis = TopContributorAnalysis(stream, args)
@@ -815,7 +815,7 @@ class TimeToThresholdAnalysis(MessageAnalysis):
         self.__analysis._finalize()
         return self.y
 
-    async def _display_result(self, result: Result[dict[UserIDType, list[int]]],
+    async def _display_result(self, result: Result[dict[UserIDType, list[float]]],
                               client: Client, max_results: int) -> None:
         y = {u: d for (u, d) in result.data.items() if d[-1] >= self.threshold}
 
@@ -945,7 +945,7 @@ class WickPenaltyHistoryAnalysis(
         return 'wick-penalties'
 
 
-class JSONExport(MessageAnalysis):
+class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]]):
     JSONFieldType = Optional[Union[int, str, list]]
     JSONMessageType = dict[str, JSONFieldType]
 
