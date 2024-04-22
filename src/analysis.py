@@ -1,6 +1,8 @@
 import logging
 import heapq
 import re
+import json
+import copy
 
 import discord
 import rocketscrape
@@ -143,6 +145,63 @@ class CountBasedMessageAnalysis(MessageAnalysis):
             print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {count}')
 
 
+S = TypeVar('S', bound=MessageAnalysis)
+
+
+class HistoryBasedMessageAnalysis(MessageAnalysis, Generic[S, T]):
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self._base_analysis = self._base_analysis_class()(stream, args)
+        self.interval = timedelta(days=1)
+
+    @classmethod
+    @abstractmethod
+    def _base_analysis_class(cls) -> type[S]:
+        pass
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return cls._base_analysis_class().custom_args()
+
+    @property
+    def _require_reactions(self) -> bool:
+        return self._base_analysis._require_reactions
+
+    def _prepare(self) -> None:
+        self._base_analysis._prepare()
+        self.next_date: Optional[datetime] = None
+        self.last_ts: Optional[datetime] = None
+        self.x: list[datetime] = []
+        self.y: list[T] = []
+
+    def __add_data_point(self, dt: datetime) -> None:
+        self.x.append(dt)
+        self.y.append(self._get_data())
+
+    @abstractmethod
+    def _get_data(self) -> T:
+        pass
+
+    def _on_message(self, message: Message) -> None:
+        self._base_analysis._on_message(message)
+        self.last_ts = message.created
+
+        if self.next_date is None:
+            self.next_date = message.created
+        elif message.created < self.next_date:
+            return
+
+        self.__add_data_point(message.created)
+        self.next_date += self.interval
+
+    def _finalize(self) -> tuple[list[datetime], list[T]]:
+        self._base_analysis._finalize()
+        if self.last_ts:
+            self.__add_data_point(self.last_ts)
+
+        return self.x, self.y
+
+
 class TopContributorAnalysis(MessageAnalysis):
     def __init__(self, stream, args):
         super().__init__(stream, args)
@@ -209,57 +268,26 @@ class TopContributorAnalysis(MessageAnalysis):
         return 'contributors'
 
 
-class ContributorHistoryAnalysis(MessageAnalysis):
-    def __init__(self, stream: MessageStream, args):
-        super().__init__(stream, args)
-        self.__contributor_analysis = TopContributorAnalysis(stream, args)
-        self.interval = timedelta(days=1)
-
+class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnalysis, dict[UserIDType, float]]):
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args()
+    def _base_analysis_class(cls) -> type[TopContributorAnalysis]:
+        return TopContributorAnalysis
 
-    @property
-    def _require_reactions(self) -> bool:
-        return False
+    def _get_data(self) -> dict[UserIDType, float]:
+        return copy.copy(self._base_analysis.total_time)
 
-    def _prepare(self) -> None:
-        self.__contributor_analysis._prepare()
-        self.x: list[datetime] = []
-        self.y: dict[UserIDType, list[float]] = {}
-        self.next_date: Optional[datetime] = None
-        self.last_ts: Optional[datetime] = None
-
-    def __add_snapshot(self, dt: datetime) -> None:
-        for author, time_min in self.__contributor_analysis.total_time.items():
-            if author not in self.y:
-                self.y[author] = [0.0] * len(self.x)
-            self.y[author].append(time_min)
-
-        self.x.append(dt)
-
-    def _on_message(self, message: Message) -> None:
-        self.__contributor_analysis._on_message(message)
-        self.last_ts = message.created
-
-        if self.next_date is None:
-            self.next_date = message.created
-        elif message.created < self.next_date:
-            return
-
-        self.__add_snapshot(self.next_date)
-        self.next_date += self.interval
-
-    def _finalize(self) -> tuple[list[datetime], dict[UserIDType, list[float]]]:
-        self.__contributor_analysis._finalize()
-        if self.last_ts:
-            self.__add_snapshot(self.last_ts)
-        return self.x, self.y
-
-    async def _display_result(self, result: Result[tuple[list[datetime], dict[UserIDType, list[float]]]],
+    async def _display_result(self, result: Result[tuple[list[datetime], list[dict[UserIDType, float]]]],
                               client: Client, max_results: int) -> None:
         x, y = result.data
-        for user_id, data in sorted(y.items(), key=lambda a: a[1][-1], reverse=True)[:max_results]:
+
+        times_by_user: dict[UserIDType, list[float]] = {}
+        for i, snapshot in enumerate(y):
+            for author, time_min in snapshot.items():
+                if author not in times_by_user:
+                    times_by_user[author] = [0.0] * i
+                times_by_user[author].append(time_min)
+
+        for user_id, data in sorted(times_by_user.items(), key=lambda a: a[1][-1], reverse=True)[:max_results]:
             plt.plot(np.array(x), np.array(data), label=(await client.try_fetch_username(user_id))
                      .encode('ascii', 'ignore').decode('ascii'))
 
@@ -763,27 +791,25 @@ class TimeToThresholdAnalysis(MessageAnalysis):
     def _prepare(self) -> None:
         self.__analysis._prepare()
         self.y: dict[UserIDType, list[float]] = {}
-        self.next_date: Optional[datetime] = None
-        self.last_ts: Optional[datetime] = None
-
-    def __add_snapshot(self) -> None:
-        for author, time in self.__analysis.total_time.items():
-            if author not in self.y:
-                self.y[author] = [0.0]
-            if self.y[author][-1] < self.threshold:
-                self.y[author].append(min(time, self.threshold))
+        self.next_dates: dict[UserIDType, datetime] = {}
 
     def _on_message(self, message: Message) -> None:
         self.__analysis._on_message(message)
-        self.last_ts = message.created
+        author_id = message.author_id
 
-        if self.next_date is None:
-            self.next_date = message.created
-        elif message.created < self.next_date:
+        if author_id not in self.next_dates:
+            self.next_dates[author_id] = message.created
+        elif message.created < self.next_dates[author_id]:
             return
 
-        self.__add_snapshot()
-        self.next_date += timedelta(days=1)
+        time_min = self.__analysis.total_time.get(author_id, 0.0)
+
+        if author_id not in self.y:
+            self.y[author_id] = [0.0]
+        if self.y[author_id][-1] < self.threshold:
+            self.y[author_id].append(min(time_min, self.threshold))
+
+        self.next_dates[author_id] += timedelta(days=1)
 
     def _finalize(self) -> dict[UserIDType, list[float]]:
         self.__analysis._finalize()
@@ -808,3 +834,176 @@ class TimeToThresholdAnalysis(MessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'days-to-threshold'
+
+
+class UniqueUserHistoryAnalysis(
+        HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
+    class __UniqueUserCountAnalysis(MessageAnalysis):
+        @property
+        def _require_reactions(self) -> bool:
+            return False
+
+        def _prepare(self) -> None:
+            self.users: set[UserIDType] = set()
+
+        def _on_message(self, message: Message) -> None:
+            self.users.add(message.author_id)
+
+        def _finalize(self) -> int:
+            return len(self.users)
+
+        async def _display_result(self, result: Result[tuple[int, int]], client: Client, max_results: int) -> None:
+            start, end = result.start, result.end
+            print(f'Unique user count for {self.stream} {self._get_date_range_str(start, end)}')
+            print(result.data)
+
+        @staticmethod
+        def subcommand() -> str:
+            return ''
+
+    @classmethod
+    def _base_analysis_class(cls) -> type[__UniqueUserCountAnalysis]:
+        return cls.__UniqueUserCountAnalysis
+
+    def _get_data(self) -> int:
+        return len(self._base_analysis.users)
+
+    async def _display_result(self, result: Result[tuple[list[datetime], list[int]]],
+                              client: Client, max_results: int) -> None:
+        x, y = result.data
+        plt.plot(np.array(x), np.array(y))
+        title = f'Number of unique {self.stream} participants over time'
+
+        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'unique-user-history'
+
+
+class WickPenaltyHistoryAnalysis(
+        HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
+    class __WickPenaltyCountAnalysis(MessageAnalysis):
+        @property
+        def _require_reactions(self) -> bool:
+            return False
+
+        def _prepare(self) -> None:
+            self.bans = 0
+            self.timeouts = 0
+
+        def _on_message(self, message: Message) -> None:
+            if message.author_id != 536991182035746816:
+                return
+
+            if not message.embeds:
+                return
+
+            description = message.embeds[0].get('description', '')
+            if 'banned' in description:
+                self.bans += 1
+            elif any((kw in description for kw in ('timed out', 'silenced'))):
+                self.timeouts += 1
+
+        def _finalize(self) -> tuple[int, int]:
+            return self.bans, self.timeouts
+
+        async def _display_result(self, result: Result[tuple[int, int]], client: Client, max_results: int) -> None:
+            start, end = result.start, result.end
+            bans, timeouts = result.data
+
+            print(f'Wick penalty count for {self.stream} {self._get_date_range_str(start, end)}')
+            print(f'Total bans: {bans}')
+            print(f'Total timeouts: {timeouts}')
+
+        @staticmethod
+        def subcommand() -> str:
+            return ''
+
+    @classmethod
+    def _base_analysis_class(cls) -> type[__WickPenaltyCountAnalysis]:
+        return cls.__WickPenaltyCountAnalysis
+
+    def _get_data(self) -> tuple[int, int]:
+        return self._base_analysis.bans, self._base_analysis.timeouts
+
+    async def _display_result(self, result: Result[tuple[list[datetime], tuple[int, int]]],
+                              client: Client, max_results: int) -> None:
+        x, y = result.data
+        x_arr, y_arr = np.array(x), np.array(y)
+
+        plt.plot(x_arr, y_arr[:, 0], label='Ban', color='firebrick')
+        plt.plot(x_arr, y_arr[:, 1], label='Timeout', color='orange')
+        title = f'Cumulative Wick Penalty Count ({self.stream})'
+        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+        plt.legend()
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'wick-penalties'
+
+
+class JSONExport(MessageAnalysis):
+    JSONFieldType = Optional[Union[int, str, list]]
+    JSONMessageType = dict[str, JSONFieldType]
+
+    def __init__(self, stream: MessageStream, args):
+        super().__init__(stream, args)
+        self.file_path = args.file_path or f'{self.stream}.json'
+        self.include_reactions = args.include_reactions
+        self.include_usernames = args.include_usernames
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return TopContributorAnalysis.custom_args() + (
+            CustomOption('file-path', str, None),
+            CustomFlag('include-reactions'),
+            CustomFlag('include-usernames'),
+        )
+
+    @property
+    def _require_reactions(self) -> bool:
+        return self.include_reactions
+
+    def _prepare(self) -> None:
+        self.data: dict[str, list[JSONExport.JSONMessageType]] = {'messages': []}
+
+    def _on_message(self, message: Message) -> None:
+        msg_data = {k: str(v) if isinstance(v, datetime) else v for (k, v) in message.__dict__.items()}
+        self.data['messages'].append(msg_data)
+
+    def _finalize(self) -> dict[str, list[JSONMessageType]]:
+        return self.data
+
+    async def _display_result(self, result: Result[dict[str, list[JSONMessageType]]], client: Client,
+                              max_results: int) -> None:
+        async def fetch_all_usernames() -> None:
+            logging.info('Fetching usernames')
+            usernames: dict[UserIDType, Optional[str]] = {}
+
+            for msg in result.data['messages']:
+                user_id = msg['author_id']
+                assert isinstance(UserIDType, int)
+                username: Optional[str] = None
+
+                if user_id in usernames:
+                    username = usernames[user_id]
+                else:
+                    if user := await client.try_fetch_user(user_id):
+                        username = user.display_name
+                    usernames[user_id] = username
+
+                msg['author_username'] = username
+
+        if self.include_usernames:
+            await fetch_all_usernames()
+
+        logging.info(f'Saving file to {self.file_path}')
+        with open(self.file_path, 'w') as f:
+            json.dump(result.data, f, indent=4)
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'json-dump'

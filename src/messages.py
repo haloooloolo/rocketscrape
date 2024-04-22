@@ -5,6 +5,7 @@ import asyncio
 import logging
 import heapq
 import re
+import shutil
 
 import discord
 import tqdm
@@ -62,6 +63,7 @@ class Message:
             return d_msg
         except discord.NotFound:
             logging.warning(f'Failed to refresh message {self.id}, ID no longer exists')
+            self.updated = datetime.now(timezone.utc)
             return None
 
     @property
@@ -134,13 +136,17 @@ class _Cache:
             if self == cache:
                 self.segments = cache.segments
             else:
+                archive_dir = os.path.join(self.cache_dir, 'archive')
+                os.makedirs(archive_dir, exist_ok=True)
+                cache_version = cache.version if hasattr(cache, 'version') else 0
+                archive_path = os.path.join(archive_dir, f'{self.channel_id}_v{cache_version}.pkl')
                 logging.warning(f'Found mismatched message cache version for ' +
-                                f'"{self.__channel_repr}", dropping data')
-                os.remove(cache_path)
+                                f'"{self.__channel_repr}", moving to {archive_path}')
+                shutil.move(cache_path, archive_path)
         except (FileNotFoundError, EOFError):
             pass
 
-        # checking for size is expensive and it only changes on commit
+        # checking for size can be expensive and it only changes on commit
         self.__len = sum((len(s) for s in self.segments))
 
     def __eq__(self, other: Any) -> bool:
@@ -268,6 +274,7 @@ class SingleChannelMessageStream(MessageStream):
             if isinstance(_message, discord.Message):
                 _d_msg = _message
                 _message = Message(_d_msg)
+                self.__cache.add(_message)
             else:
                 last_change = _message.last_edited or _message.created
                 is_stale = (_message.updated - last_change) <= self.refresh_window
@@ -275,11 +282,10 @@ class SingleChannelMessageStream(MessageStream):
                 if is_stale or missing_reactions:
                     _d_msg = await _message.refresh(self.channel)
 
-            if _d_msg:
-                if include_reactions:
-                    await _message._fetch_reactions(_d_msg)
-                self.__cache.add(_message)
-                self.__cache.commit_maybe(start, _message.created)
+            if _d_msg and include_reactions:
+                await _message._fetch_reactions(_d_msg)
+
+            self.__cache.commit_maybe(start, _message.created)
 
             nonlocal last_timestamp
             last_timestamp = _message.created
@@ -348,7 +354,7 @@ class MultiChannelMessageStream(MessageStream):
         if not self.__include_threads:
             return self
 
-        logging.info('Fetching archived threads')
+        logging.info('Fetching threads')
         for stream in copy.copy(self.streams):
             if not isinstance(stream.channel, discord.TextChannel):
                 continue
