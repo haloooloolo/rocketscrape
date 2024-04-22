@@ -148,7 +148,7 @@ class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
 S = TypeVar('S', bound=MessageAnalysis)
 
 
-class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S[T], T]):
+class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S, T]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self._base_analysis = self._base_analysis_class()(stream, args)
@@ -1000,7 +1000,7 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
         if self.include_usernames:
             await fetch_all_usernames()
 
-        logging.info(f'Saving file to {self.file_path}')
+        logging.info(f'Saving {self.file_path}')
         with open(self.file_path, 'w') as f:
             json.dump(result.data, f, indent=4)
 
