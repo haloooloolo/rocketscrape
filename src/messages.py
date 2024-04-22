@@ -340,8 +340,12 @@ class MultiChannelMessageStream(MessageStream):
         self.streams = {SingleChannelMessageStream(c, *args) for c in channels}
         self.__stream_args = args
         self.__include_threads = include_threads
-        suffix = '+' if include_threads else ''
-        self.__repr = f'({", ".join([str(s) for s in self.streams])}){suffix}'
+
+        if len(self.streams) == 1:
+            base_repr = str(next(iter(self.streams)))
+        else:
+            base_repr = '(' + ', '.join([str(s) for s in self.streams]) + ')'
+        self.__repr = base_repr + ('+' if include_threads else '')
 
     def get_message(self, message_id: MessageIDType) -> Optional[Message]:
         for stream in self.streams:
@@ -400,7 +404,7 @@ class ServerMessageStream(MultiChannelMessageStream):
     def __init__(self, guild: discord.Guild, include_threads: bool, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         super().__init__(channels, include_threads, *args)
-        self.__repr = str(guild)
+        self.__repr = str(guild) + ('+' if include_threads else '')
 
     def __repr__(self) -> str:
         return self.__repr

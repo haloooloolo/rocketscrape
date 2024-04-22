@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from tabulate import tabulate
 
 from client import Client
+from utils import sanitize_str
 from messages import MessageStream, Message, UserIDType, ChannelIDType
 
 T = TypeVar('T')
@@ -288,13 +289,12 @@ class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnaly
                 times_by_user[author].append(time_min)
 
         for user_id, data in sorted(times_by_user.items(), key=lambda a: a[1][-1], reverse=True)[:max_results]:
-            plt.plot(np.array(x), np.array(data), label=(await client.try_fetch_username(user_id))
-                     .encode('ascii', 'ignore').decode('ascii'))
+            username = await client.try_fetch_username(user_id)
+            plt.plot(np.array(x), np.array(data), label=sanitize_str(username))
 
         plt.ylabel('time (mins)')
         plt.legend()
-        plt.title(f'Top {self.stream} contributors over time'
-                  .encode('ascii', 'ignore').decode('ascii'))
+        plt.title(sanitize_str(f'Top {self.stream} contributors over time'))
         plt.show()
 
     @staticmethod
@@ -580,7 +580,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
 
         username = await client.try_fetch_username(self.user)
         title = f'{username} message activity in {self.stream} by local time'
-        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+        plt.title(sanitize_str(title))
 
         plt.subplots_adjust(bottom=0.25)
         plt.show()
@@ -821,14 +821,13 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
 
         for user_id, data in sorted(y.items(), key=lambda a: len(a[1]))[:max_results]:
             username = await client.try_fetch_username(user_id)
-            plt.plot(np.arange(len(data)), np.array(data), label=username
-                     .encode('ascii', 'ignore').decode('ascii'))
+            plt.plot(np.arange(len(data)), np.array(data), label=sanitize_str(username))
 
         plt.xlabel('days')
         plt.ylabel('time (mins)')
         plt.legend()
-        plt.title(f'Fastest {self.stream} contributors to reach {self.threshold:,} minutes'
-                  .encode('ascii', 'ignore').decode('ascii'))
+        title = f'Fastest {self.stream} contributors to reach {self.threshold:,} minutes'
+        plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
@@ -874,7 +873,7 @@ class UniqueUserHistoryAnalysis(
         plt.plot(np.array(x), np.array(y))
         title = f'Number of unique {self.stream} participants over time'
 
-        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+        plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
@@ -936,7 +935,7 @@ class WickPenaltyHistoryAnalysis(
         plt.plot(x_arr, y_arr[:, 0], label='Ban', color='firebrick')
         plt.plot(x_arr, y_arr[:, 1], label='Timeout', color='orange')
         title = f'Cumulative Wick Penalty Count ({self.stream})'
-        plt.title(title.encode('ascii', 'ignore').decode('ascii'))
+        plt.title(sanitize_str(title))
         plt.legend()
         plt.show()
 
@@ -951,7 +950,11 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
 
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.file_path = args.file_path or f'{self.stream}.json'
+        self.file_path = args.file_path
+        if not self.file_path:
+            self.file_path = sanitize_str(str(stream).strip()).lower()
+            self.file_path = self.file_path.replace(' ', '-')
+            self.file_path += '.json'
         self.include_reactions = args.include_reactions
         self.include_usernames = args.include_usernames
 
