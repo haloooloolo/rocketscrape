@@ -2,7 +2,6 @@ import logging
 import heapq
 import re
 import json
-import copy
 
 import discord
 import rocketscrape
@@ -12,7 +11,7 @@ import numpy as np
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable
+from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable, cast
 from datetime import datetime, timedelta
 from tabulate import tabulate
 
@@ -275,7 +274,7 @@ class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnaly
         return TopContributorAnalysis
 
     def _get_data(self) -> dict[UserIDType, float]:
-        return copy.copy(self._base_analysis.total_time)
+        return self._base_analysis.total_time.copy()
 
     async def _display_result(self, result: Result[tuple[list[datetime], list[dict[UserIDType, float]]]],
                               client: Client, max_results: int) -> None:
@@ -365,8 +364,8 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     def _finalize(self) -> dict[UserIDType, float]:
         total_time = super()._finalize()
         for author_id, ts in self.last_seen.items():
-            assert self.last_ts is not None
-            if (self.last_ts - ts) < self.inactivity_threshold:
+            last_ts = cast(datetime, self.last_ts)
+            if (last_ts - ts) < self.inactivity_threshold:
                 del total_time[author_id]
 
         return total_time
@@ -987,8 +986,7 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
             usernames: dict[UserIDType, Optional[str]] = {}
 
             for msg in result.data['messages']:
-                user_id = msg['author_id']
-                assert isinstance(UserIDType, int)
+                user_id = cast(int, msg['author_id'])
                 username: Optional[str] = None
 
                 if user_id in usernames:

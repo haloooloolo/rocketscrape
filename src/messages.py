@@ -1,5 +1,4 @@
 import os
-import copy
 import pickle
 import asyncio
 import logging
@@ -292,7 +291,7 @@ class SingleChannelMessageStream(MessageStream):
 
             return _message
 
-        for segment in copy.copy(self.__cache.segments):
+        for segment in self.__cache.segments.copy():
             # segment ahead of requested interval, skip
             if start and start > segment.end:
                 continue
@@ -359,7 +358,7 @@ class MultiChannelMessageStream(MessageStream):
             return self
 
         logging.info('Fetching threads')
-        for stream in copy.copy(self.streams):
+        for stream in self.streams.copy():
             if not isinstance(stream.channel, discord.TextChannel):
                 continue
             try:
