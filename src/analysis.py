@@ -675,7 +675,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
                               client: Client, max_results: int) -> None:
         exclusion_list: set[UserIDType] = set()
 
-        server_id, role_id = Role.rocketpool.value
+        role_id, server_id = Role.rocketpool.value
         if core_team_role := await client.try_fetch_role(role_id, server_id):
             team_members = {member.id for member in await core_team_role.fetch_members()}
             exclusion_list.update(team_members)
