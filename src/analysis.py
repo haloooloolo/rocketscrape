@@ -4,7 +4,6 @@ import re
 import json
 
 import discord
-import rocketscrape
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,7 +15,7 @@ from datetime import datetime, timedelta
 from tabulate import tabulate
 
 from client import Client
-from utils import sanitize_str
+from utils import Server, Role, sanitize_str
 from messages import MessageStream, Message, UserIDType, ChannelIDType
 
 T = TypeVar('T')
@@ -516,7 +515,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return MessageAnalysis.custom_args() + (
-            CustomArgument('user', UserIDType),
+            CustomArgument('user-id', UserIDType),
             CustomOption('num-buckets', int, 24),
             CustomOption('key-format', str, '',
                          'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
@@ -676,12 +675,12 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
                               client: Client, max_results: int) -> None:
         exclusion_list: set[UserIDType] = set()
 
-        team_role_id = 405169632195117078
-        if core_team_role := await client.try_fetch_role(team_role_id, rocketscrape.Server.rocketpool):
+        server_id, role_id = Role.rocketpool.value
+        if core_team_role := await client.try_fetch_role(role_id, server_id):
             team_members = {member.id for member in await core_team_role.fetch_members()}
             exclusion_list.update(team_members)
         else:
-            logging.warning(f'Could not fetch Rocket Pool team members (role id {team_role_id})')
+            logging.warning(f'Could not fetch Rocket Pool team members (role id {role_id})')
 
         def user_eligible(_user) -> bool:
             if _user is None:
@@ -742,7 +741,7 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
     @classmethod
     def custom_args(cls) -> tuple[ArgType, ...]:
         return MessageAnalysis.custom_args() + (
-            CustomArgument('user', UserIDType),
+            CustomArgument('user-id', UserIDType),
         )
 
     @property
@@ -760,7 +759,7 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
         return self.channel_ids
 
     async def _display_result(self, result: Result[set[ChannelIDType]], client: Client, max_results: int) -> None:
-        server_id = rocketscrape.Server.rocketpool.value
+        server_id = Server.rocketpool.value
         for channel_id in result.data:
             channel = await client.try_fetch_channel(channel_id)
             if isinstance(channel, discord.Thread):
