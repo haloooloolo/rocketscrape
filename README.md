@@ -23,7 +23,7 @@ Below are examples of how to use RocketScrape:
 rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] (--include-threads | --exclude-threads) ANALYSIS
 ```
 Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel / thread ID or one of the predefined channel names from
-the `Channel` enum in [rocketscrape.py](src/rocketscrape.py). You can choose to include or exclude threads within specified
+the `Channel` enum in [rocketscrape.py](src/utils.py). You can choose to include or exclude threads within specified
 channels using the required `--include-threads` or `--exclude-threads` flag. Similarly, you can run rocketscrape on an entire server using:
 ```bash
 rocketscrape --server SERVER (--include-threads | --exclude-threads) ANALYSIS
