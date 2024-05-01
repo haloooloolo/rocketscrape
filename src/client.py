@@ -3,6 +3,7 @@ import discord
 import logging
 from typing import Any, Callable, Awaitable, Optional, Union
 from threading import Lock
+from asyncio.exceptions import CancelledError
 
 DiscordChannel = Union[discord.abc.GuildChannel, discord.abc.PrivateChannel, discord.Thread]
 DiscordUser = Union[discord.User, discord.ClientUser]
@@ -14,6 +15,12 @@ class Client(discord.Client):
         self.__func = func
         self.__lock = Lock()
         self.args = args
+
+    def run(self, token: str, **kwargs) -> None:
+        try:
+            super().run(token, **kwargs)
+        except CancelledError:
+            pass
 
     async def on_ready(self) -> None:
         if not self.__lock.acquire(blocking=False):
