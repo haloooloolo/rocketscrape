@@ -21,20 +21,20 @@ from messages import MessageStream, Message, UserIDType, ChannelIDType
 T = TypeVar('T')
 
 
-@dataclass
+@dataclass(frozen=True)
 class CustomArgument:
     name: str
     type: type[Any]
     help: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CustomFlag:
     name: str
     help: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class CustomOption:
     name: str
     type: type[Any]
@@ -45,7 +45,7 @@ class CustomOption:
 ArgType = Union[CustomArgument, CustomOption, CustomFlag]
 
 
-@dataclass
+@dataclass(frozen=True)
 class Result(Generic[T]):
     start: Optional[datetime]
     end: Optional[datetime]
@@ -116,8 +116,8 @@ class MessageAnalysis(ABC, Generic[T]):
         pass
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return ()
+    def custom_args(cls) -> set[ArgType]:
+        return set()
 
 
 class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
@@ -159,7 +159,7 @@ class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]
         pass
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
+    def custom_args(cls) -> set[ArgType]:
         return cls._base_analysis_class().custom_args()
 
     @property
@@ -208,11 +208,11 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
         self.session_timeout = args.session_timeout
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return MessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return MessageAnalysis.custom_args() | {
             CustomOption('base-session-time', int, 5),
             CustomOption('session-timeout', int, 15)
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -340,11 +340,11 @@ class MissingPersonAnalysis(TopContributorAnalysis):
         self.inactivity_threshold = timedelta(days=args.inactivity_threshold)
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return TopContributorAnalysis.custom_args() | {
             CustomOption('inactivity_threshold', int, 90,
                          'number of days without activity required to be considered inactive'),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -458,10 +458,10 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
         return True
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return CountBasedMessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return CountBasedMessageAnalysis.custom_args() | {
             CustomArgument('react', str, 'emoji to count received reactions for'),
-        )
+        }
 
     def _on_message(self, message: Message) -> None:
         if self.emoji in message.reactions:
@@ -482,10 +482,10 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
         self.emoji = args.react
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return CountBasedMessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return CountBasedMessageAnalysis.custom_args() | {
             CustomArgument('react', str, 'emoji to count given reactions for'),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -513,13 +513,13 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         self.key_format: str = args.key_format
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return MessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return MessageAnalysis.custom_args() | {
             CustomArgument('user-id', UserIDType),
             CustomOption('num-buckets', int, 24),
             CustomOption('key-format', str, '',
                          'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -595,11 +595,11 @@ class WordCountAnalysis(MessageAnalysis[int]):
         self.ignore_case = args.ignore_case
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return MessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return MessageAnalysis.custom_args() | {
             CustomArgument('word', str),
             CustomFlag('ignore-case', 'make word match case-insensitive'),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -655,11 +655,11 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
         return False
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return cls.__SupportBountyHelper.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return cls.__SupportBountyHelper.custom_args() | {
             CustomOption('min-monthly-activity', int, 60,
                          'minimum required activity per month in minutes'),
-        )
+        }
 
     def _prepare(self) -> None:
         self.__helper._prepare()
@@ -739,10 +739,10 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
         self.user_id: UserIDType = args.user
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return MessageAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return MessageAnalysis.custom_args() | {
             CustomArgument('user-id', UserIDType),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -777,10 +777,10 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
         self.threshold = args.time_threshold
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return TopContributorAnalysis.custom_args() | {
             CustomOption('time-threshold', int, 50_000),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
@@ -834,7 +834,7 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
 
 
 class UniqueUserHistoryAnalysis(
-        HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
+    HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
     class __UniqueUserCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
@@ -880,7 +880,7 @@ class UniqueUserHistoryAnalysis(
 
 
 class WickPenaltyHistoryAnalysis(
-        HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
+    HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
     class __WickPenaltyCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
@@ -952,9 +952,8 @@ class IMCContributionAnalysis(MessageAnalysis):
         return False
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + \
-            MessageCountAnalysis.custom_args()
+    def custom_args(cls) -> set[ArgType]:
+        return TopContributorAnalysis.custom_args() | MessageCountAnalysis.custom_args()
 
     def __init__(self, stream, args):
         super().__init__(stream, args)
@@ -974,9 +973,11 @@ class IMCContributionAnalysis(MessageAnalysis):
         count_data = self.__count._finalize()
         return {uid: (time_data[uid], count_data[uid]) for uid in time_data.keys()}
 
-    async def _display_result(self, result: Result[dict[UserIDType, tuple[float, int]]], client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[UserIDType, tuple[float, int]]], client: Client,
+                              max_results: int) -> None:
         data = result.data
-        top_contributors: set[UserIDType] = set(heapq.nlargest(max_results, result.data.keys(), key=lambda a: data[a][0]))
+        top_contributors: set[UserIDType] = set(
+            heapq.nlargest(max_results, result.data.keys(), key=lambda a: data[a][0]))
         contributors: list[UserIDType] = list(self.imc_members.union(top_contributors))
         contributors.sort(key=lambda a: data.get(a, (0.0, 0))[0], reverse=True)
 
@@ -1011,12 +1012,12 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
         self.include_usernames = args.include_usernames
 
     @classmethod
-    def custom_args(cls) -> tuple[ArgType, ...]:
-        return TopContributorAnalysis.custom_args() + (
+    def custom_args(cls) -> set[ArgType]:
+        return TopContributorAnalysis.custom_args() | {
             CustomOption('file-path', str, None),
             CustomFlag('include-reactions'),
             CustomFlag('include-usernames'),
-        )
+        }
 
     @property
     def _require_reactions(self) -> bool:
