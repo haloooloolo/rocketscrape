@@ -942,6 +942,60 @@ class WickPenaltyHistoryAnalysis(
         return 'wick-penalties'
 
 
+class IMCContributionAnalysis(MessageAnalysis):
+    imc_members = {760093247707807794, 474028048551772160, 851524243861536819, 707707212184944702,
+                   343180040747614209, 354099029434695681, 707508825955237898, 376562530463776787,
+                   727367895989879060, 109422960682496000, 405158743920345128}
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    @classmethod
+    def custom_args(cls) -> tuple[ArgType, ...]:
+        return TopContributorAnalysis.custom_args() + \
+            MessageCountAnalysis.custom_args()
+
+    def __init__(self, stream, args):
+        super().__init__(stream, args)
+        self.__time = TopContributorAnalysis(stream, args)
+        self.__count = MessageCountAnalysis(stream, args)
+
+    def _prepare(self) -> None:
+        self.__time._prepare()
+        self.__count._prepare()
+
+    def _on_message(self, message: Message) -> None:
+        self.__time._on_message(message)
+        self.__count._on_message(message)
+
+    def _finalize(self) -> dict[UserIDType, tuple[float, int]]:
+        time_data = self.__time._finalize()
+        count_data = self.__count._finalize()
+        return {uid: (time_data[uid], count_data[uid]) for uid in time_data.keys()}
+
+    async def _display_result(self, result: Result[dict[UserIDType, tuple[float, int]]], client: Client, max_results: int) -> None:
+        data = result.data
+        top_contributors: set[UserIDType] = set(heapq.nlargest(max_results, result.data.keys(), key=lambda a: data[a][0]))
+        contributors: list[UserIDType] = list(self.imc_members.union(top_contributors))
+        contributors.sort(key=lambda a: data.get(a, (0.0, 0))[0], reverse=True)
+
+        table: list[tuple[str, int, int]] = []
+
+        for user_id in contributors:
+            username = await client.try_fetch_username(user_id)
+            contrib_time, msg_count = data.get(user_id, (0.0, 0))
+            table.append((username, round(contrib_time), msg_count))
+
+        start, end = result.start, result.end
+        print(f'IMC contributions for {self.stream} {self._get_date_range_str(start, end)}')
+        print(tabulate(table, headers=('user', 'time (mins)', 'msg count')))
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'imc-contributions'
+
+
 class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]]):
     JSONFieldType = Optional[Union[int, str, list]]
     JSONMessageType = dict[str, JSONFieldType]
