@@ -2,11 +2,11 @@ import argparse
 from enum import Enum, IntEnum
 
 
-class _EnumArg(IntEnum):
+class _IntEnumArg(IntEnum):
     @classmethod
     def argtype(cls, s: str) -> int:
         try:
-            return cls[s]
+            return cls[s].value
         except KeyError:
             pass  # fallback to regular int
         try:
@@ -19,11 +19,13 @@ class _EnumArg(IntEnum):
         return self.name
 
 
-class Server(_EnumArg):
+class Server(_IntEnumArg):
     rocketpool = 405159462932971535
+    rocketpool_imc = 1114304337041166368
+    rocketpool_gmc = 1109303903767507016
 
 
-class Channel(_EnumArg):
+class Channel(_IntEnumArg):
     general = 704196071881965589
     trading = 405163713063288832
     support = 468923220607762485
