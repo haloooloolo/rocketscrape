@@ -10,7 +10,7 @@ from typing import TypeVar, get_args
 from client import Client
 from utils import Server, Channel
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, ChannelType
-from analysis import MessageAnalysis, CustomArgument, CustomFlag, CustomOption
+from analysis import MessageAnalysis, CustomArgument
 
 
 T = TypeVar('T')
@@ -107,25 +107,17 @@ def parse_args():
     parser.add_argument('--commit-batch-size', type=int, default=2500,
                         help='maximum number of new messages that will be committed to disk at once')
 
-    def add_custom_arg(_parser, _arg):
-        if isinstance(_arg, CustomFlag):
-            _parser.add_argument(f'--{_arg.name}', action='store_true', help=_arg.help)
-        elif isinstance(_arg, CustomArgument):
-            _parser.add_argument(_arg.name, type=_arg.type, help=_arg.help)
-        elif isinstance(_arg, CustomOption):
-            _parser.add_argument(f'--{_arg.name}', type=_arg.type, default=_arg.default, help=_arg.help)
-
     base_cls = MessageAnalysis
-    for arg in base_cls.custom_args():
-        add_custom_arg(parser, arg)
+    for custom_arg in base_cls.custom_args():
+        parser.add_argument(*custom_arg.args, **custom_arg.kwargs)
 
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
     for cls in get_subclasses(base_cls):
         if subcommand := cls.subcommand():
             subparser = subparsers.add_parser(subcommand)
             subparser.set_defaults(analysis=cls)
-            for arg in cls.custom_args():
-                add_custom_arg(subparser, arg)
+            for custom_arg in cls.custom_args():
+                subparser.add_argument(*custom_arg.args, **custom_arg.kwargs)
 
     return parser.parse_args()
 
