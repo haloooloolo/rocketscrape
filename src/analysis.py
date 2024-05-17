@@ -312,6 +312,7 @@ class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnaly
             username = await client.try_fetch_username(user_id)
             plt.plot(np.array(x), np.array(data), label=sanitize_str(username))
 
+        plt.xticks(rotation=30, ha='right')
         plt.ylabel('time (mins)')
         plt.legend()
         plt.title(sanitize_str(f'Top {self.stream} contributors over time'))
@@ -666,6 +667,7 @@ class WordCountHistoryAnalysis(HistoryBasedMessageAnalysis[WordCountAnalysis, in
     ) -> None:
         x, y = result.data
         plt.plot(np.array(x), np.array(y))
+        plt.xticks(rotation=30, ha='right')
         title = f'Occurences of "{self._base_analysis.word}" in {self.stream} over time'
         plt.title(sanitize_str(title))
         plt.show()
@@ -868,6 +870,7 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
             username = await client.try_fetch_username(user_id)
             plt.plot(np.arange(len(data)), np.array(data), label=sanitize_str(username))
 
+        plt.xticks(rotation=30, ha='right')
         plt.xlabel('days')
         plt.ylabel('time (mins)')
         plt.legend()
@@ -916,8 +919,8 @@ class UniqueUserHistoryAnalysis(
                               client: Client, max_results: int) -> None:
         x, y = result.data
         plt.plot(np.array(x), np.array(y))
+        plt.xticks(rotation=30, ha='right')
         title = f'Number of unique {self.stream} participants over time'
-
         plt.title(sanitize_str(title))
         plt.show()
 
@@ -972,8 +975,6 @@ class WickPenaltyHistoryAnalysis(
     def _get_data(self) -> tuple[int, int]:
         return self._base_analysis.bans, self._base_analysis.timeouts
 
-
-
     async def _display_result(self, result: Result[tuple[list[datetime], list[tuple[int, int]]]],
                               client: Client, max_results: int) -> None:
         x, y = result.data
@@ -981,6 +982,7 @@ class WickPenaltyHistoryAnalysis(
 
         plt.plot(x_arr, y_arr[:, 0], label='Ban', color='firebrick')
         plt.plot(x_arr, y_arr[:, 1], label='Timeout', color='orange')
+        plt.xticks(rotation=30, ha='right')
         title = f'Cumulative Wick Penalty Count ({self.stream})'
         plt.title(sanitize_str(title))
         plt.legend()
