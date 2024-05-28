@@ -236,8 +236,10 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomOption('base-session-time', float, 5.0),
-            CustomOption('session-timeout', float, 15.0),
+            CustomOption('base-session-time', float, 3.0,
+                         'added time (in minutes) to account for activity immediately before and after a session'),
+            CustomOption('session-timeout', float, 15.0,
+                         'maximum amount of time (in minutes) between two messages in the same session'),
         }
 
     @property
@@ -882,7 +884,7 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
 
 
 class UniqueUserHistoryAnalysis(
-        HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
+    HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
     class __UniqueUserCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
@@ -928,7 +930,7 @@ class UniqueUserHistoryAnalysis(
 
 
 class WickPenaltyHistoryAnalysis(
-        HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
+    HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
     class __WickPenaltyCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
