@@ -23,7 +23,7 @@ T = TypeVar('T')
 
 @dataclass(frozen=True)
 class CustomArgument(ABC):
-    args: tuple[Any]
+    args: tuple[Any, ...]
     kwargs: dict[str, Any]
 
     def __hash__(self):
@@ -71,8 +71,9 @@ class Result(Generic[T]):
 
 class MessageAnalysis(ABC, Generic[T]):
     def __init__(self, stream: MessageStream, args):
-        self.log_interval = timedelta(seconds=args.log_interval)
         self.stream = stream
+        self.log_interval = timedelta(seconds=args.log_interval)
+        self.user_filter = set(args.user_filter) if args.user_filter else None
 
     async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result[T]:
         assert (start is None) or (end is None) or (end > start)
@@ -84,6 +85,9 @@ class MessageAnalysis(ABC, Generic[T]):
             if (ts - last_ts) >= self.log_interval:
                 logging.info(f'Message stream reached {message.created}')
                 last_ts = ts
+
+            if self.user_filter and (message.author_id not in self.user_filter):
+                continue
 
             self._on_message(message)
 
@@ -214,7 +218,12 @@ class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]
         return self.x, self.y
 
     @abstractmethod
-    async def _display_result(self, result: Result[tuple[list[datetime], list[T]]], client: Client, max_results: int) -> None:
+    async def _display_result(
+            self,
+            result: Result[tuple[list[datetime], list[T]]],
+            client: Client,
+            max_results: int
+    ) -> None:
         pass
 
 
@@ -223,14 +232,12 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
         super().__init__(stream, args)
         self.base_session_time: float = args.base_session_time
         self.session_timeout: float = args.session_timeout
-        self.users: Optional[set[UserIDType]] = set(args.users) if args.users else None
 
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
             CustomOption('base-session-time', float, 5.0),
             CustomOption('session-timeout', float, 15.0),
-            CustomList('users', UserIDType, 'list of specific user IDs to include')
         }
 
     @property
@@ -255,9 +262,6 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
     def _on_message(self, message: Message) -> None:
         timestamp = message.created
         author_id = message.author_id
-
-        if self.users and (author_id not in self.users):
-            return
 
         session_start, session_end = self.open_sessions.get(author_id, (timestamp, timestamp))
         if self.__to_minutes(timestamp - session_end) < self.session_timeout:
@@ -529,7 +533,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
 class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.user: UserIDType = args.user
+        self.user_id: UserIDType = args.user
         self.num_buckets: int = args.num_buckets
         assert (24 * 60 % self.num_buckets) == 0, \
             'bucket count doesn\'t cleanly divide into minutes'
@@ -538,7 +542,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomPositionalArgument('user-id', UserIDType),
+            CustomPositionalArgument('user', UserIDType),
             CustomOption('num-buckets', int, 24),
             CustomOption('key-format', str, '',
                          'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
@@ -559,7 +563,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
             .replace('$d', str(timestamp.day))
 
     def _on_message(self, message: Message) -> None:
-        if message.author_id != self.user:
+        if message.author_id != self.user_id:
             return
 
         timestamp = message.created.astimezone()
@@ -599,7 +603,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         if self.key_format:
             plt.legend(loc='upper left')
 
-        username = await client.try_fetch_username(self.user)
+        username = await client.try_fetch_username(self.user_id)
         title = f'{username} message activity in {self.stream} by local time'
         plt.title(sanitize_str(title))
 
@@ -611,7 +615,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         return 'message-time-histogram'
 
 
-class WordCountAnalysis(MessageAnalysis[int]):
+class WordCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self.word: str = args.word
@@ -628,11 +632,8 @@ class WordCountAnalysis(MessageAnalysis[int]):
     def _require_reactions(self) -> bool:
         return False
 
-    def _prepare(self) -> None:
-        self.count: int = 0
-
-    def _finalize(self) -> int:
-        return self.count
+    def _title(self) -> str:
+        return ""
 
     def _on_message(self, message: Message) -> None:
         word, content = self.word, message.content
@@ -640,28 +641,25 @@ class WordCountAnalysis(MessageAnalysis[int]):
             word, content = word.lower(), content.lower()
 
         if word in content:
-            self.count += 1
-
-    async def _display_result(self, result: Result[int], client: Client, max_results: int) -> None:
-        range_str = self._get_date_range_str(result.start, result.end)
-        print(f'{result.data} occurrences of "{self.word}" in {self.stream} {range_str}')
+            author_id = message.author_id
+            self.count[author_id] = self.count.get(author_id, 0) + 1
 
     @staticmethod
     def subcommand() -> str:
         return 'word-count'
 
 
-class WordCountHistoryAnalysis(HistoryBasedMessageAnalysis[WordCountAnalysis, int]):
+class WordCountHistoryAnalysis(HistoryBasedMessageAnalysis[WordCountAnalysis, dict[UserIDType, int]]):
     @classmethod
     def _base_analysis_class(cls) -> type[WordCountAnalysis]:
         return WordCountAnalysis
 
-    def _get_data(self) -> int:
+    def _get_data(self) -> dict[UserIDType, int]:
         return self._base_analysis.count
 
     async def _display_result(
             self,
-            result: Result[tuple[list[datetime], list[int]]],
+            result: Result[tuple[list[datetime], list[dict[UserIDType, int]]]],
             client: Client,
             max_results: int
     ) -> None:
@@ -1048,7 +1046,7 @@ class IMCContributionAnalysis(MessageAnalysis):
         return 'imc-contributions'
 
 
-class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]]):
+class JSONExport(MessageAnalysis[list['JSONExport.JSONMessageType']]):
     JSONFieldType = Optional[Union[int, str, list]]
     JSONMessageType = dict[str, JSONFieldType]
 
@@ -1075,22 +1073,22 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
         return self.include_reactions
 
     def _prepare(self) -> None:
-        self.data: dict[str, list[JSONExport.JSONMessageType]] = {'messages': []}
+        self.data: list[JSONExport.JSONMessageType] = []
 
     def _on_message(self, message: Message) -> None:
         msg_data = {k: str(v) if isinstance(v, datetime) else v for (k, v) in message.__dict__.items()}
-        self.data['messages'].append(msg_data)
+        self.data.append(msg_data)
 
-    def _finalize(self) -> dict[str, list[JSONMessageType]]:
+    def _finalize(self) -> list[JSONMessageType]:
         return self.data
 
-    async def _display_result(self, result: Result[dict[str, list[JSONMessageType]]], client: Client,
+    async def _display_result(self, result: Result[list[JSONMessageType]], client: Client,
                               max_results: int) -> None:
         async def fetch_all_usernames() -> None:
             logging.info('Fetching usernames')
             usernames: dict[UserIDType, Optional[str]] = {}
 
-            for msg in result.data['messages']:
+            for msg in result.data:
                 user_id = cast(int, msg['author_id'])
                 username: Optional[str] = None
 
@@ -1112,4 +1110,4 @@ class JSONExport(MessageAnalysis[dict[str, list['JSONExport.JSONMessageType']]])
 
     @staticmethod
     def subcommand() -> str:
-        return 'json-dump'
+        return 'json-export'

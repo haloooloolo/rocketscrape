@@ -10,7 +10,7 @@ from typing import TypeVar, get_args
 from client import Client
 from utils import Server, Channel
 from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, ChannelType
-from analysis import MessageAnalysis, CustomArgument
+from analysis import MessageAnalysis
 
 
 T = TypeVar('T')
@@ -80,17 +80,11 @@ def parse_args():
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
-    source.add_argument('-c', '--channel', type=Channel.argtype, action='append',
+    source.add_argument('-c', '--channel', type=Channel.argtype, nargs='+',
                         help=f'one or more of {channel_choices} or channel ID(s)')
     server_choices = tuple((s.name for s in Server))
     source.add_argument('--server', type=Server.argtype,
                         help=f'one of {server_choices} or server ID')
-
-    threads = parser.add_mutually_exclusive_group(required=True)
-    threads.add_argument('--include-threads', dest='threads', action='store_true', default=None,
-                         help='include streams for all threads within the specified channels')
-    threads.add_argument('--exclude-threads', dest='threads', action='store_false', default=None,
-                         help='do not include streams for any threads within the specified channels')
 
     parser.add_argument('-s', '--start', type=datetime.fromisoformat,
                         help='start of date range in ISO format')
@@ -106,11 +100,16 @@ def parse_args():
                         help='messages last ')
     parser.add_argument('--commit-batch-size', type=int, default=2500,
                         help='maximum number of new messages that will be committed to disk at once')
+    parser.add_argument('--user-filter', type=int, nargs='+', default=None,
+                        help='if specified, list of user IDs for which to include data')
+
+    threads = parser.add_mutually_exclusive_group(required=True)
+    threads.add_argument('--include-threads', dest='threads', action='store_true', default=None,
+                         help='include streams for all threads within the specified channels')
+    threads.add_argument('--exclude-threads', dest='threads', action='store_false', default=None,
+                         help='do not include streams for any threads within the specified channels')
 
     base_cls = MessageAnalysis
-    for custom_arg in base_cls.custom_args():
-        parser.add_argument(*custom_arg.args, **custom_arg.kwargs)
-
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
     for cls in get_subclasses(base_cls):
         if subcommand := cls.subcommand():
