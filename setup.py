@@ -1,5 +1,5 @@
-from setuptools import setup, find_packages
 import pathlib
+from setuptools import setup
 
 readme = pathlib.Path(__file__).parent.resolve() / "README.md"
 
@@ -10,8 +10,8 @@ setup(
     long_description=readme.read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     author="haloooloolo",
-    package_dir={"": "src"},
-    packages=find_packages(where="src"),
+    packages=["rocketscrape"],
+    py_modules=[],
     python_requires=">=3.9, <4",
     install_requires=[
         "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
@@ -21,7 +21,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'rocketscrape = rocketscrape:main',
+            'rocketscrape = rocketscrape.__main__:main',
         ],
     }
 )

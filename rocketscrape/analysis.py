@@ -14,9 +14,18 @@ from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable, 
 from datetime import datetime, timedelta
 from tabulate import tabulate
 
-from client import Client
-from utils import Server, Role, sanitize_str
-from messages import MessageStream, Message, UserIDType, ChannelIDType
+from rocketscrape.client import Client
+from rocketscrape.utils import (
+    Server,
+    Role,
+    sanitize_str
+)
+from rocketscrape.messages import (
+    MessageStream,
+    Message,
+    UserIDType,
+    ChannelIDType
+)
 
 T = TypeVar('T')
 

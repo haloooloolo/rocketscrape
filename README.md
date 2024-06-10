@@ -6,7 +6,7 @@ A command line tool to process Discord message streams.
 
 To get started, install the `rocketscrape` Python package from within the directory using:
 ```bash
-pip install -e .
+pip install .
 ```
 RocketScrape requires a Discord authentication token for API requests, which should be stored in a
 `DISCORD_USER_TOKEN` environment variable. For more information on how to obtain a token for your account see https://discordpy-self.readthedocs.io/en/latest/authenticating.html.

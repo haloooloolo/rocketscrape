@@ -7,10 +7,15 @@ import argparse
 from datetime import datetime, timezone
 from typing import TypeVar, get_args
 
-from client import Client
-from utils import Server, Channel
-from messages import SingleChannelMessageStream, MultiChannelMessageStream, ServerMessageStream, ChannelType
-from analysis import MessageAnalysis
+from rocketscrape.client import Client
+from rocketscrape.utils import Server, Channel
+from rocketscrape.messages import (
+    SingleChannelMessageStream,
+    MultiChannelMessageStream,
+    ServerMessageStream,
+    ChannelType
+)
+from rocketscrape.analysis import MessageAnalysis
 
 
 T = TypeVar('T')
@@ -21,7 +26,7 @@ def main():
     Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
 
 
-async def _main(client) -> int:
+async def _main(client: Client) -> int:
     args = client.args
     if args.start and args.start.tzinfo is None:
         args.start = args.start.replace(tzinfo=timezone.utc)
@@ -73,8 +78,10 @@ def get_subclasses(cls: type[T]) -> set[type[T]]:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(prog='rocketscrape',
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog='rocketscrape',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
 
     root_dir = pathlib.Path(__file__).parent.parent.resolve()
 
@@ -113,7 +120,7 @@ def parse_args():
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
     for cls in get_subclasses(base_cls):
         if subcommand := cls.subcommand():
-            subparser = subparsers.add_parser(subcommand)
+            subparser = subparsers.add_parser(subcommand, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
             subparser.set_defaults(analysis=cls)
             for custom_arg in cls.custom_args():
                 subparser.add_argument(*custom_arg.args, **custom_arg.kwargs)
