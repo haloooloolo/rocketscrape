@@ -799,7 +799,7 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomPositionalArgument('user-id', UserIDType),
+            CustomPositionalArgument('user', UserIDType),
         }
 
     @property
