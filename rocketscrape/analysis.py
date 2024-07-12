@@ -486,6 +486,29 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
         return 'thank-count'
 
 
+class KronScoreAnalysis(CountBasedMessageAnalysis):
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _on_message(self, message: Message) -> None:
+        if message.author_id != 118923557265735680:
+            return
+
+        if "thanks for reporting" not in message.content.lower():
+            return
+
+        for user_id in message.mentions:
+            self.count[user_id] = self.count.get(user_id, 0) + 1
+
+    def _title(self) -> str:
+        return f'{self.stream} Kron score'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'kron-score'
+
+
 class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)

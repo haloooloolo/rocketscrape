@@ -1,8 +1,8 @@
-.fleet
-.build
-__pycache__
+.fleet/
+build/
+__pycache__/
 *.pkl
 .DS_STORE
-.venv
-.idea
+.venv/
+.idea/
 *.egg*

@@ -1,9 +1,9 @@
 import os
 import logging
 import inspect
-import pathlib
 import argparse
 
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import TypeVar, get_args
 
@@ -83,7 +83,7 @@ def parse_args():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    root_dir = pathlib.Path(__file__).parent.parent.resolve()
+    root_dir = Path(__file__).parent.resolve()
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
@@ -101,7 +101,7 @@ def parse_args():
                         help='maximum length of analysis output')
     parser.add_argument('-l', '--log-interval', type=int, default=1,
                         help='frequency of progress logs in seconds')
-    parser.add_argument('--cache-dir', type=str, default=(root_dir/'cache'),
+    parser.add_argument('--cache-dir', type=str, default=(root_dir/'.cache'),
                         help='directory to store the message cache in')
     parser.add_argument('--refresh-window', type=int, default=1,
                         help='messages last ')
