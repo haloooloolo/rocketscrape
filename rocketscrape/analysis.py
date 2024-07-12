@@ -1026,9 +1026,17 @@ class WickPenaltyHistoryAnalysis(
 
 
 class IMCContributionAnalysis(MessageAnalysis):
-    imc_members = {760093247707807794, 474028048551772160, 851524243861536819, 707707212184944702,
-                   343180040747614209, 354099029434695681, 707508825955237898, 376562530463776787,
-                   727367895989879060, 109422960682496000, 405158743920345128}
+    imc_members = {
+        109422960682496000,  # valdorff
+        474028048551772160,  # yokem55
+        995528889860370442,  # orangesamus
+        707707212184944702,  # philcares
+        354099029434695681,  # drworm.eth
+        343180040747614209,  # jasper.the.friendly.ghost
+        806275470140244019,  # peteris
+        764676584832761878,  # waqwaqattack
+        360474629988548608,  # haloooloolo
+    }
 
     @property
     def _require_reactions(self) -> bool:
