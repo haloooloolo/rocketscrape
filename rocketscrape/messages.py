@@ -15,7 +15,7 @@ from typing import Optional, AsyncIterator, Iterable, Union, Any
 from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass
 
-ChannelType = Union[discord.TextChannel, discord.Thread]
+ChannelType = Union[discord.TextChannel, discord.Thread, discord.GroupChannel, discord.DMChannel]
 UserIDType = int
 MessageIDType = int
 ChannelIDType = int

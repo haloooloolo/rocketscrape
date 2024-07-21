@@ -667,7 +667,7 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
         return False
 
     def _title(self) -> str:
-        return ""
+        return f"Number of \"{self.word}\" occurrences in {self.stream}"
 
     def _on_message(self, message: Message) -> None:
         word, content = self.word, message.content
