@@ -2,17 +2,18 @@ import os
 import logging
 import inspect
 import argparse
+import discord
 
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import TypeVar, get_args
-
 from rocketscrape.client import Client
 from rocketscrape.utils import Server, Channel
 from rocketscrape.messages import (
-    SingleChannelMessageStream,
+    ChannelMessageStream,
     MultiChannelMessageStream,
     ServerMessageStream,
+    MultiServerMessageStream,
     ChannelType
 )
 from rocketscrape.analysis import MessageAnalysis
@@ -35,10 +36,18 @@ async def _main(client: Client) -> int:
 
     common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
     if args.server:
-        if not (guild := await client.try_fetch_guild(args.server)):
-            logging.error(f'Server {args.server} could not be found')
-            return 1
-        stream = await ServerMessageStream(guild, args.threads, *common_stream_args)
+        guilds: list[discord.Guild] = []
+        for server_id in args.server:
+            if not (guild := await client.try_fetch_guild(server_id)):
+                logging.error(f'Server {server_id} could not be found')
+                return 1
+
+            guilds.append(guild)
+
+        if len(guilds) > 1:
+            stream = await MultiServerMessageStream(guilds, args.threads, *common_stream_args)
+        else:
+            stream = await ServerMessageStream(guilds[0], args.threads, *common_stream_args)
     else:
         channels: list[ChannelType] = []
         for channel_id in args.channel:
@@ -54,7 +63,7 @@ async def _main(client: Client) -> int:
         if len(channels) > 1 or args.threads:
             stream = await MultiChannelMessageStream(channels, args.threads, *common_stream_args)
         else:
-            stream = SingleChannelMessageStream(channels[0], *common_stream_args)
+            stream = ChannelMessageStream(channels[0], *common_stream_args)
 
     try:
         analysis = args.analysis(stream, args)
@@ -90,8 +99,8 @@ def parse_args():
     source.add_argument('-c', '--channel', type=Channel.argtype, nargs='+',
                         help=f'one or more of {channel_choices} or channel ID(s)')
     server_choices = tuple((s.name for s in Server))
-    source.add_argument('--server', type=Server.argtype,
-                        help=f'one of {server_choices} or server ID')
+    source.add_argument('--server', type=Server.argtype, nargs='+',
+                        help=f'one or more of {server_choices} or server ID(s)')
 
     parser.add_argument('-s', '--start', type=datetime.fromisoformat,
                         help='start of date range in ISO format')

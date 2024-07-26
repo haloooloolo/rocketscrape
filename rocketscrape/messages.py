@@ -57,7 +57,7 @@ class Message:
 
     async def refresh(self, channel: ChannelType) -> Optional[discord.Message]:
         try:
-            d_msg = await channel.get_partial_message(self.id).fetch()
+            d_msg = await channel.fetch_message(self.id)
             self.__dict__.update((Message(d_msg)).__dict__)
             return d_msg
         except discord.NotFound:
@@ -238,7 +238,7 @@ class MessageStream(ABC):
         pass
 
 
-class SingleChannelMessageStream(MessageStream):
+class ChannelMessageStream(MessageStream):
     def __init__(self, channel: ChannelType, cache_dir: str,
                  refresh_window: int, commit_batch_size: int) -> None:
         self.channel = channel
@@ -336,7 +336,7 @@ class SingleChannelMessageStream(MessageStream):
 
 class MultiChannelMessageStream(MessageStream):
     def __init__(self, channels: Iterable[ChannelType], include_threads: bool, *args) -> None:
-        self.streams = {SingleChannelMessageStream(c, *args) for c in channels}
+        self.streams = {ChannelMessageStream(c, *args) for c in channels}
         self.__stream_args = args
         self.__include_threads = include_threads
 
@@ -363,9 +363,9 @@ class MultiChannelMessageStream(MessageStream):
                 continue
             try:
                 for thread in stream.channel.threads:
-                    self.streams.add(SingleChannelMessageStream(thread, *self.__stream_args))
+                    self.streams.add(ChannelMessageStream(thread, *self.__stream_args))
                 async for thread in stream.channel.archived_threads(limit=None):
-                    self.streams.add(SingleChannelMessageStream(thread, *self.__stream_args))
+                    self.streams.add(ChannelMessageStream(thread, *self.__stream_args))
             except discord.errors.Forbidden:
                 logging.warning(f'No access to thread list for "{stream}", skipping')
 
@@ -404,6 +404,22 @@ class ServerMessageStream(MultiChannelMessageStream):
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         super().__init__(channels, include_threads, *args)
         self.__repr = str(guild) + ('+' if include_threads else '')
+
+    def __repr__(self) -> str:
+        return self.__repr
+
+class MultiServerMessageStream(MultiChannelMessageStream):
+    def __init__(self, guilds: Iterable[discord.Guild], include_threads: bool, *args) -> None:
+        channels = []
+        for guild in guilds:
+            channels.extend([c for c in guild.channels if isinstance(c, discord.TextChannel)])
+        super().__init__(channels, include_threads, *args)
+
+        if len(self.streams) == 1:
+            base_repr = str(next(iter(guilds)))
+        else:
+            base_repr = '(' + ', '.join([str(g) for g in guilds]) + ')'
+        self.__repr = base_repr + ('+' if include_threads else '')
 
     def __repr__(self) -> str:
         return self.__repr

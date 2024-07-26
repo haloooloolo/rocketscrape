@@ -11,7 +11,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable, cast
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from tabulate import tabulate
 
 from rocketscrape.client import Client
@@ -913,6 +913,37 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
     @staticmethod
     def subcommand() -> str:
         return 'days-to-threshold'
+
+
+class DailyMessageHistoryAnalysis(MessageAnalysis[dict[date, int]]):
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.tally: dict[date, int] = {}
+
+    def _on_message(self, message: Message) -> None:
+        msg_date = message.created.date()
+        self.tally[msg_date] = self.tally.get(msg_date, 0) + 1
+
+    def _finalize(self) -> dict[date, int]:
+        return self.tally
+
+    async def _display_result(self, result: Result[dict[date, int]],
+                              client: Client, max_results: int) -> None:
+        x = list(result.data.keys())
+        y = list(result.data.values())
+        plt.plot(np.array(x), np.array(y))
+        plt.ylim(bottom=0)
+        plt.ylabel('message count')
+        title = f'Daily {self.stream} message count'
+        plt.title(sanitize_str(title))
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'daily-messages'
 
 
 class UniqueUserHistoryAnalysis(

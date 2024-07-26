@@ -21,8 +21,9 @@ class _IntEnumArg(IntEnum):
 
 class Server(_IntEnumArg):
     rocketpool = 405159462932971535
-    rocketpool_imc = 1114304337041166368
-    rocketpool_gmc = 1109303903767507016
+    rp_imc = 1114304337041166368
+    rp_gmc = 1109303903767507016
+    rp_ping_service = 823815099991064586
 
 
 class Channel(_IntEnumArg):
