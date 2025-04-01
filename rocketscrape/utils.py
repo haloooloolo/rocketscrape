@@ -24,6 +24,7 @@ class Server(_IntEnumArg):
     rp_imc = 1114304337041166368
     rp_gmc = 1109303903767507016
     rp_ping_service = 823815099991064586
+    nodeset = 968587363536220252
 
 
 class Channel(_IntEnumArg):
@@ -33,7 +34,7 @@ class Channel(_IntEnumArg):
 
 
 class Role(Enum):
-    rocketpool = (405169632195117078, Server.rocketpool)
+    rpcore = (405169632195117078, Server.rocketpool)
 
 
 def sanitize_str(string: str) -> str:

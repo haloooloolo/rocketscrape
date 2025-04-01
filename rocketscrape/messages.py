@@ -408,6 +408,7 @@ class ServerMessageStream(MultiChannelMessageStream):
     def __repr__(self) -> str:
         return self.__repr
 
+
 class MultiServerMessageStream(MultiChannelMessageStream):
     def __init__(self, guilds: Iterable[discord.Guild], include_threads: bool, *args) -> None:
         channels = []

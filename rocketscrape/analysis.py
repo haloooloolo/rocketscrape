@@ -407,8 +407,8 @@ class MissingPersonAnalysis(TopContributorAnalysis):
 
         return total_time
 
-    async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, args) -> None:
-        top_contributors = heapq.nlargest(args.max_results, result.data.items(), key=lambda a: a[1])
+    async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, max_results: int) -> None:
+        top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
         print(f'Top {self.stream} contributors with no recent activity ')
         for i, (author_id, time) in enumerate(top_contributors):
@@ -654,12 +654,15 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
         super().__init__(stream, args)
         self.word: str = args.word
         self.ignore_case = args.ignore_case
+        self.message_based = args.message_based
+        self.total_count = {}
 
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
             CustomPositionalArgument('word', str),
             CustomFlag('ignore-case', 'make word match case-insensitive'),
+            CustomFlag('message-based', 'only count the first occurence in each message'),
         }
 
     @property
@@ -756,7 +759,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
                               client: Client, max_results: int) -> None:
         exclusion_list: set[UserIDType] = set()
 
-        role_id, server_id = Role.rocketpool.value
+        role_id, server_id = Role.rpcore.value
         if core_team_role := await client.try_fetch_role(role_id, server_id):
             team_members = {member.id for member in await core_team_role.fetch_members()}
             exclusion_list.update(team_members)
@@ -807,7 +810,10 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
             name, times = row
             table.append([name] + [fmt_h_m(t) for t in times])
 
-        print(tabulate(table, headers=headers, colalign=('left',), stralign='right'))
+        if table:
+            print(tabulate(table, headers=headers, colalign=('left',), stralign='right'))
+        else:
+            print("No users are eligible for the bounty.")
 
     @staticmethod
     def subcommand() -> str:
@@ -925,6 +931,12 @@ class DailyMessageHistoryAnalysis(MessageAnalysis[dict[date, int]]):
 
     def _on_message(self, message: Message) -> None:
         msg_date = message.created.date()
+        if self.tally and msg_date not in self.tally:
+            last_date = list(self.tally.keys())[-1]
+            while last_date != msg_date:
+                last_date += timedelta(days=1)
+                self.tally[last_date] = 0
+
         self.tally[msg_date] = self.tally.get(msg_date, 0) + 1
 
     def _finalize(self) -> dict[date, int]:
@@ -944,6 +956,134 @@ class DailyMessageHistoryAnalysis(MessageAnalysis[dict[date, int]]):
     @staticmethod
     def subcommand() -> str:
         return 'daily-messages'
+
+
+class MessageStreakAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.current_streak: dict[UserIDType, tuple[date, int]] = {}
+        self.max_streak: dict[UserIDType, int] = {}
+
+    def _on_message(self, message: Message) -> None:
+        msg_date = message.created.date()
+        msg_author = message.author_id
+
+        if msg_author not in self.current_streak:
+            self.current_streak[msg_author] = msg_date, 1
+            self.max_streak[msg_author] = 1
+            return
+
+        last_date, streak = self.current_streak[msg_author]
+        if (msg_date - last_date) == timedelta(days=1):
+            self.current_streak[msg_author] = msg_date, streak + 1
+            if streak >= self.max_streak[msg_author]:
+                self.max_streak[msg_author] = streak + 1
+        elif (msg_date - last_date) > timedelta(days=1):
+            self.current_streak[msg_author] = msg_date, 1
+
+    def _finalize(self) -> dict[UserIDType, tuple[int, int]]:
+        combined_dict = {}
+        yesterday = date.today() - timedelta(days=1)
+        for user in self.current_streak:
+            last_msg_date, current_streak = self.current_streak[user]
+            if last_msg_date >= yesterday:
+                combined_dict[user] = current_streak, self.max_streak[user]
+            else:
+                combined_dict[user] = 0, self.max_streak[user]
+        return combined_dict
+
+    async def _display_result(self, result: Result[dict[UserIDType, tuple[int, int]]], client: Client, max_results: int) -> None:
+        range_str = self._get_date_range_str(result.start, result.end)
+        top_streaks_cur = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1][0])
+        top_streaks_max = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1][1])
+
+        print(f'Longest active {self.stream} message streaks {range_str}')
+        for i, (user_id, (streak, _)) in enumerate(top_streaks_cur):
+          print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {streak}')
+
+        print('')
+
+        print(f'Longest {self.stream} message streaks {range_str}')
+        for i, (user_id, (_, streak)) in enumerate(top_streaks_max):
+          print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {streak}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'message-streaks'
+
+class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.days: dict[UserIDType, set[date]] = {}
+
+    def _on_message(self, message: Message) -> None:
+        msg_date = message.created.date()
+        msg_author = message.author_id
+
+        if msg_author not in self.days:
+            self.days[msg_author] = set()
+
+        self.days[msg_author].add(msg_date)
+
+    def _finalize(self) -> dict[UserIDType, int]:
+        return {u: len(d) for u,d in self.days.items()}
+
+    async def _display_result(self, result: Result[dict[UserIDType, int]], client: Client, max_results: int) -> None:
+        range_str = self._get_date_range_str(result.start, result.end)
+        top_streaks_cur = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
+
+        print(f'Most active days in {self.stream} {range_str}')
+        for i, (user_id, active_days) in enumerate(top_streaks_cur):
+            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {active_days}')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'active-days'
+
+
+class DailyUniqueUserHistoryAnalysis(MessageAnalysis[dict[date, int]]):
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.tally: dict[date, set[UserIDType]] = {}
+
+    def _on_message(self, message: Message) -> None:
+        msg_date = message.created.date()
+        if msg_date not in self.tally:
+            if self.tally:
+                last_date = list(self.tally.keys())[-1]
+                while last_date != msg_date:
+                    last_date += timedelta(days=1)
+                    self.tally[last_date] = set()
+            self.tally[msg_date] = set()
+
+        self.tally[msg_date].add(message.author_id)
+
+    def _finalize(self) -> dict[date, set[UserIDType]]:
+        return self.tally
+
+    async def _display_result(self, result: Result[dict[date, set[UserIDType]]],
+                              client: Client, max_results: int) -> None:
+        x = list(result.data.keys())
+        y = [len(users) for users in result.data.values()]
+        plt.plot(np.array(x), np.array(y))
+        plt.ylim(bottom=0)
+        plt.ylabel('user count')
+        title = f'Daily unique user count for {self.stream}'
+        plt.title(sanitize_str(title))
+        plt.show()
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'daily-unique-users'
 
 
 class UniqueUserHistoryAnalysis(
@@ -1119,7 +1259,7 @@ class IMCContributionAnalysis(MessageAnalysis):
         return 'imc-contributions'
 
 
-class JSONExport(MessageAnalysis[list['JSONExport.JSONMessageType']]):
+class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
     JSONFieldType = Optional[Union[int, str, list]]
     JSONMessageType = dict[str, JSONFieldType]
 
@@ -1146,7 +1286,7 @@ class JSONExport(MessageAnalysis[list['JSONExport.JSONMessageType']]):
         return self.include_reactions
 
     def _prepare(self) -> None:
-        self.data: list[JSONExport.JSONMessageType] = []
+        self.data: list[JSONDump.JSONMessageType] = []
 
     def _on_message(self, message: Message) -> None:
         msg_data = {k: str(v) if isinstance(v, datetime) else v for (k, v) in message.__dict__.items()}
@@ -1183,4 +1323,4 @@ class JSONExport(MessageAnalysis[list['JSONExport.JSONMessageType']]):
 
     @staticmethod
     def subcommand() -> str:
-        return 'json-export'
+        return 'json-dump'
