@@ -99,9 +99,11 @@ def parse_args():
     source.add_argument('-c', '--channel', type=Channel.argtype, nargs='+',
                         help=f'one or more of {channel_choices} or channel ID(s)')
     server_choices = tuple((s.name for s in Server))
-    source.add_argument('--server', type=Server.argtype, nargs='+',
+    source.add_argument('-g', '--server', type=Server.argtype, nargs='+',
                         help=f'one or more of {server_choices} or server ID(s)')
-
+    
+    parser.add_argument('-t', '--threads', dest='threads', action='store_true',
+                        help='include streams for all threads within the specified channels')
     parser.add_argument('-s', '--start', type=datetime.fromisoformat,
                         help='start of date range in ISO format')
     parser.add_argument('-e', '--end', type=datetime.fromisoformat,
@@ -118,12 +120,6 @@ def parse_args():
                         help='maximum number of new messages that will be committed to disk at once')
     parser.add_argument('--user-filter', type=int, nargs='+', default=None,
                         help='if specified, list of user IDs for which to include data')
-
-    threads = parser.add_mutually_exclusive_group(required=True)
-    threads.add_argument('--include-threads', dest='threads', action='store_true', default=None,
-                         help='include streams for all threads within the specified channels')
-    threads.add_argument('--exclude-threads', dest='threads', action='store_false', default=None,
-                         help='do not include streams for any threads within the specified channels')
 
     base_cls = MessageAnalysis
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)

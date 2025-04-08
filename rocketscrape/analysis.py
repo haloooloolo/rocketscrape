@@ -1324,3 +1324,26 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
     @staticmethod
     def subcommand() -> str:
         return 'json-dump'
+
+
+class RocketFuelRaffle(CountBasedMessageAnalysis):
+    WAQ = 764676584832761878
+    WAQ_EMOTE = '<:waq:1022673797943406603>'
+    
+    def _on_message(self, message: Message) -> None:
+        author = message.author_id
+        is_waq = (author == self.WAQ) and (message.reference is None)
+        is_waqqed = (self.WAQ in message.reactions.get(self.WAQ_EMOTE, {}))
+        if is_waq or is_waqqed:
+            self.count[author] = self.count.get(author, 0) + 1
+    
+    @property
+    def _require_reactions(self) -> bool:
+        return True
+
+    def _title(self) -> str:
+        return 'Rocket Fuel Raffle Tickets'
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'rf-raffle'
