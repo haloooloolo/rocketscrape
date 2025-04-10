@@ -20,13 +20,12 @@ The tool primarily expects a source (flag) and analysis type (positional argumen
 Below are examples of how to use RocketScrape:
 
 ```bash
-rocketscrape -c CHANNEL1 [-c CHANNEL2, ...] (--include-threads | --exclude-threads) ANALYSIS
+rocketscrape -c CHANNEL1 [CHANNEL2, ...] (--threads) ANALYSIS
 ```
 Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel / thread ID or one of the predefined channel names from
-the `Channel` enum in [rocketscrape.py](src/utils.py). You can choose to include or exclude threads within specified
-channels using the required `--include-threads` or `--exclude-threads` flag. Similarly, you can run rocketscrape on an entire server using:
+the `Channel` enum in [utils.py](rocketscrape/utils.py). You can choose to include threads within specified channels using the `--threads` flag. Similarly, you can run rocketscrape on one or multiple servers using:
 ```bash
-rocketscrape --server SERVER (--include-threads | --exclude-threads) ANALYSIS
+rocketscrape --server SERVER1 [SERVER2, ...] (--threads) ANALYSIS
 ```
 `SERVER` can either be a server ID or a name defined in the `Server` enum. There are optional `-s / --start` and
 `-e / --end` arguments that accept an ISO format datetime string to restrict the date range. For instance,
@@ -47,4 +46,4 @@ rocketscrape contributor-history -h
 Each analysis type in RocketScrape is implemented as a subclass of `MessageAnalysis`. These classes are required to
 implement `_require_reactions(self)`, `_prepare(self)`, `_on_message(self, message)`, `_finalize(self)`,
 `_display_result(self, result, client, max_results)` and `subcommand()`. Optionally, `custom_args(cls)` can be overridden
-to add analysis-specific command line arguments. Examples can be found in [analysis.py](src/analysis.py).
+to add analysis-specific command line arguments. Examples can be found in [analysis.py](rocketscrape/analysis.py).
