@@ -17,7 +17,7 @@ setup(
         "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
         "matplotlib",
         "tqdm",
-        "tabulate",
+        "tabulate[widechars]",
     ],
     entry_points={
         'console_scripts': [
