@@ -79,10 +79,8 @@ async def _main(client: Client) -> int:
 
 def get_subclasses(cls: type[T]) -> set[type[T]]:
     classes = [cls]
-    i = 0
-    while i < len(classes):
-        classes.extend(classes[i].__subclasses__())
-        i += 1
+    for subcls in cls.__subclasses__():
+        classes.extend(get_subclasses(subcls))
     return {c for c in classes if not inspect.isabstract(c)}
 
 
@@ -96,30 +94,52 @@ def parse_args():
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
-    source.add_argument('-c', '--channel', type=Channel.argtype, nargs='+',
-                        help=f'one or more of {channel_choices} or channel ID(s)')
-    server_choices = tuple((s.name for s in Server))
-    source.add_argument('-g', '--server', type=Server.argtype, nargs='+',
-                        help=f'one or more of {server_choices} or server ID(s)')
+    source.add_argument(
+        '-c', '--channel', type=Channel.argtype, nargs='+',
+        help=f'one or more of {channel_choices} or channel ID(s)'
+    )
+    server_choices = tuple(s.name for s in Server)
+    source.add_argument(
+        '-g', '--server', type=Server.argtype, nargs='+',
+        help=f'one or more of {server_choices} or server ID(s)'
+    )
     
-    parser.add_argument('-t', '--threads', dest='threads', action='store_true',
-                        help='include streams for all threads within the specified channels')
-    parser.add_argument('-s', '--start', type=datetime.fromisoformat,
-                        help='start of date range in ISO format')
-    parser.add_argument('-e', '--end', type=datetime.fromisoformat,
-                        help='end of date range in ISO format')
-    parser.add_argument('-r', '--max-results', type=int, default=10,
-                        help='maximum length of analysis output')
-    parser.add_argument('-l', '--log-interval', type=int, default=1,
-                        help='frequency of progress logs in seconds')
-    parser.add_argument('--cache-dir', type=str, default=(root_dir/'.cache'),
-                        help='directory to store the message cache in')
-    parser.add_argument('--refresh-window', type=int, default=1,
-                        help='messages last ')
-    parser.add_argument('--commit-batch-size', type=int, default=2500,
-                        help='maximum number of new messages that will be committed to disk at once')
-    parser.add_argument('--user-filter', type=int, nargs='+', default=None,
-                        help='if specified, list of user IDs for which to include data')
+    parser.add_argument(
+        '-t', '--include-threads', dest='threads', action='store_true',
+        help='include streams for all sub-threads within the specified channels'
+    )
+    parser.add_argument(
+        '-s', '--start', type=datetime.fromisoformat,
+        help='start of date range in ISO format'
+    )
+    parser.add_argument(
+        '-e', '--end', type=datetime.fromisoformat,
+        help='end of date range in ISO format'
+    )
+    parser.add_argument(
+        '-r', '--max-results', type=int, default=10,
+        help='maximum length of analysis output'
+    )
+    parser.add_argument(
+        '-l', '--log-interval', type=int, default=1,
+        help='frequency of progress logs in seconds'
+    )
+    parser.add_argument(
+        '--cache-dir', type=str, default=(root_dir/'.cache'),
+        help='directory to store the message cache in'
+    )
+    parser.add_argument(
+        '--refresh-window', type=int, default=1,
+        help='messages cached less than this many hours ago will be fetched again'
+    )
+    parser.add_argument(
+        '--commit-batch-size', type=int, default=2500,
+        help='maximum number of new messages that will be committed to disk at once'
+    )
+    parser.add_argument(
+        '--user-filter', type=int, nargs='+', default=None,
+        help='if specified, list of user IDs for which to include data'
+    )
 
     base_cls = MessageAnalysis
     subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
