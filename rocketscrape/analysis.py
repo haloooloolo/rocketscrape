@@ -1343,6 +1343,18 @@ class RocketFuelRaffle(CountBasedMessageAnalysis):
 
     def _title(self) -> str:
         return 'Rocket Fuel Raffle Tickets'
+    
+    async def _display_result(self, result: Result[dict[UserIDType, int]], client: Client, max_results: int) -> None:
+        range_str = self._get_date_range_str(result.start, result.end)
+        
+        data: list[tuple[str, int]] = []
+        for user_id, ticket_count in heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1]):
+            username = await client.try_fetch_username(user_id)
+            data.append((f'{username}', ticket_count))
+
+        print(f'{self._title()} {range_str}')
+        for username, ticket_count in data:
+            print(f'{username}\t{ticket_count}')
 
     @staticmethod
     def subcommand() -> str:
