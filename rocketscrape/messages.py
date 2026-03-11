@@ -60,8 +60,8 @@ class Message:
             d_msg = await channel.fetch_message(self.id)
             self.__dict__.update((Message(d_msg)).__dict__)
             return d_msg
-        except discord.NotFound:
-            logging.warning(f'Failed to refresh message {self.id}, ID no longer exists')
+        except (discord.NotFound, discord.Forbidden):
+            logging.warning(f'Failed to refresh message {self.id}, message no longer accessible')
             self.updated = datetime.now(timezone.utc)
             return None
 
@@ -344,7 +344,7 @@ class MultiChannelMessageStream(MessageStream):
             base_repr = str(next(iter(self.streams)))
         else:
             base_repr = '(' + ', '.join([str(s) for s in self.streams]) + ')'
-        self.__repr = base_repr + ('+' if include_threads else '')
+        self.__repr = base_repr + ('+🧵' if include_threads else '')
 
     def get_message(self, message_id: MessageIDType) -> Optional[Message]:
         for stream in self.streams:
@@ -403,7 +403,7 @@ class ServerMessageStream(MultiChannelMessageStream):
     def __init__(self, guild: discord.Guild, include_threads: bool, *args) -> None:
         channels = [c for c in guild.channels if isinstance(c, discord.TextChannel)]
         super().__init__(channels, include_threads, *args)
-        self.__repr = str(guild) + ('+' if include_threads else '')
+        self.__repr = str(guild) + ('+🧵' if include_threads else '')
 
     def __repr__(self) -> str:
         return self.__repr
@@ -420,7 +420,7 @@ class MultiServerMessageStream(MultiChannelMessageStream):
             base_repr = str(next(iter(guilds)))
         else:
             base_repr = '(' + ', '.join([str(g) for g in guilds]) + ')'
-        self.__repr = base_repr + ('+' if include_threads else '')
+        self.__repr = base_repr + ('+🧵' if include_threads else '')
 
     def __repr__(self) -> str:
         return self.__repr
