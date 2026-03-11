@@ -662,7 +662,7 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
         return MessageAnalysis.custom_args() | {
             CustomPositionalArgument('word', str),
             CustomFlag('ignore-case', 'make word match case-insensitive'),
-            CustomFlag('message-based', 'only count the first occurence in each message'),
+            CustomFlag('message-based', 'only count the first occurrence in each message'),
         }
 
     @property
@@ -1287,16 +1287,29 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
 
     def _prepare(self) -> None:
         self.data: list[JSONDump.JSONMessageType] = []
+        
+    @staticmethod
+    def _sanitize(data: Any) -> Any:
+        if data is None:
+            return None
+        
+        if isinstance(data, (list, set)):
+            return [JSONDump._sanitize(v) for v in data]
+        elif isinstance(data, dict):
+            return {k: JSONDump._sanitize(v) for k, v in data.items()}
+        elif isinstance(data, (int, str, bool)):
+            return data
+        else:
+            return str(data)
 
     def _on_message(self, message: Message) -> None:
-        msg_data = {k: str(v) if isinstance(v, datetime) else v for (k, v) in message.__dict__.items()}
+        msg_data = JSONDump._sanitize(message.__dict__)
         self.data.append(msg_data)
 
     def _finalize(self) -> list[JSONMessageType]:
         return self.data
 
-    async def _display_result(self, result: Result[list[JSONMessageType]], client: Client,
-                              max_results: int) -> None:
+    async def _display_result(self, result: Result[list[JSONMessageType]], client: Client, _: int) -> None:
         async def fetch_all_usernames() -> None:
             logging.info('Fetching usernames')
             usernames: dict[UserIDType, Optional[str]] = {}
