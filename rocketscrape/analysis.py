@@ -1372,3 +1372,41 @@ class RocketFuelRaffle(CountBasedMessageAnalysis):
     @staticmethod
     def subcommand() -> str:
         return 'rf-raffle'
+
+
+class LongevityAnalysis(MessageAnalysis[dict[UserIDType, timedelta]]):
+    def __init__(self, stream, args):
+        super().__init__(stream, args)
+
+    @property
+    def _require_reactions(self) -> bool:
+        return False
+
+    def _prepare(self) -> None:
+        self.first_seen: dict[UserIDType, datetime] = {}
+        self.last_seen: dict[UserIDType, datetime] = {}
+
+    def _on_message(self, message: Message) -> None:
+        author = message.author_id
+        if author not in self.first_seen:
+            self.first_seen[author] = message.created
+
+        self.last_seen[author] = message.created
+
+    def _finalize(self) -> dict[UserIDType, timedelta]:
+        active_time: dict[UserIDType, timedelta] = {}
+        for author in self.first_seen.keys():
+            active_time[author] = self.last_seen[author] - self.first_seen[author]
+        return active_time
+
+    async def _display_result(self, result: Result[dict[UserIDType, timedelta]], client: Client, max_results: int) -> None:
+        range_str = self._get_date_range_str(result.start, result.end)
+        longest_active = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
+
+        print(f'Longest active contributors in {self.stream} {range_str}')
+        for i, (author_id, time) in enumerate(longest_active):
+            print(f'{i + 1}. {await client.try_fetch_username(author_id)}: {time.days} days')
+
+    @staticmethod
+    def subcommand() -> str:
+        return 'longevity'
