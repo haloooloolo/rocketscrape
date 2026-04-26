@@ -27,6 +27,8 @@ from rocketscrape.messages import (
     ChannelIDType
 )
 
+log = logging.getLogger(__name__)
+
 T = TypeVar('T')
 
 
@@ -83,16 +85,19 @@ class MessageAnalysis(ABC, Generic[T]):
         self.stream = stream
         self.log_interval = timedelta(seconds=args.log_interval)
         self.user_filter = set(args.user_filter) if args.user_filter else None
+        self.skip_fetch = args.no_fetch
 
     async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result[T]:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
 
-        async for message in self.stream.get_history(start, end, self._require_reactions):
+        async for message in self.stream.get_history(
+            start, end, self._require_reactions, skip_fetch=self.skip_fetch
+        ):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
-                logging.info(f'Message stream reached {message.created}')
+                log.info(f'Message stream reached {message.created}')
                 last_ts = ts
 
             if self.user_filter and (message.author_id not in self.user_filter):
@@ -764,7 +769,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
             team_members = {member.id for member in await core_team_role.fetch_members()}
             exclusion_list.update(team_members)
         else:
-            logging.warning(f'Could not fetch Rocket Pool team members (role id {role_id})')
+            log.warning(f'Could not fetch Rocket Pool team members (role id {role_id})')
 
         def user_eligible(_user) -> bool:
             if _user is None:
@@ -1311,7 +1316,7 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
 
     async def _display_result(self, result: Result[list[JSONMessageType]], client: Client, _: int) -> None:
         async def fetch_all_usernames() -> None:
-            logging.info('Fetching usernames')
+            log.info('Fetching usernames')
             usernames: dict[UserIDType, Optional[str]] = {}
 
             for msg in result.data:
@@ -1330,7 +1335,7 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
         if self.include_usernames:
             await fetch_all_usernames()
 
-        logging.info(f'Saving {self.file_path}')
+        log.info(f'Saving {self.file_path}')
         with open(self.file_path, 'w') as f:
             json.dump(result.data, f, indent=4)
 

@@ -1,14 +1,16 @@
 import os
+import asyncio
 import logging
 import inspect
 import argparse
 import discord
+import platformdirs
 
-from pathlib import Path
 from datetime import datetime, timezone
 from typing import TypeVar, get_args
 from rocketscrape.client import Client
 from rocketscrape.utils import Server, Channel
+from rocketscrape.cache import _Database
 from rocketscrape.messages import (
     ChannelMessageStream,
     MultiChannelMessageStream,
@@ -22,8 +24,12 @@ from rocketscrape.analysis import MessageAnalysis
 T = TypeVar('T')
 
 
+log = logging.getLogger(__name__)
+
+
 def main():
-    logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+    logging.getLogger('discord').setLevel(logging.ERROR)
+    logging.getLogger('rocketscrape').setLevel(logging.INFO)
     Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
 
 
@@ -34,12 +40,13 @@ async def _main(client: Client) -> int:
     if args.end and args.end.tzinfo is None:
         args.end = args.end.replace(tzinfo=timezone.utc)
 
-    common_stream_args = (args.cache_dir, args.refresh_window, args.commit_batch_size)
+    database = _Database(args.cache_dir)
+    common_stream_args = (database, args.refresh_window, args.commit_batch_size)
     if args.server:
         guilds: list[discord.Guild] = []
         for server_id in args.server:
             if not (guild := await client.try_fetch_guild(server_id)):
-                logging.error(f'Server {server_id} could not be found')
+                log.error(f'Server {server_id} could not be found')
                 return 1
 
             guilds.append(guild)
@@ -52,10 +59,10 @@ async def _main(client: Client) -> int:
         channels: list[ChannelType] = []
         for channel_id in args.channel:
             if not (channel := await client.try_fetch_channel(channel_id)):
-                logging.error(f'Channel {channel_id} could not be found')
+                log.error(f'Channel {channel_id} could not be found')
                 return 1
             if not isinstance(channel, get_args(ChannelType)):
-                logging.error(f'Channel {channel_id} has incompatible type {type(channel)}')
+                log.error(f'Channel {channel_id} has incompatible type {type(channel)}')
                 return 2
 
             channels.append(channel)
@@ -70,8 +77,11 @@ async def _main(client: Client) -> int:
         result = await analysis.run(args.start, args.end)
         print()  # some spacing to make it look nicer
         await result.display(client, args.max_results)
+    except asyncio.CancelledError:
+        log.warning('Interrupted, partial progress saved to cache')
+        return 130
     except Exception as exc:
-        logging.exception(str(exc))
+        log.exception(str(exc))
         return 1
 
     return 0
@@ -89,8 +99,6 @@ def parse_args():
         prog='rocketscrape',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-
-    root_dir = Path(__file__).parent.resolve()
 
     source = parser.add_mutually_exclusive_group(required=True)
     channel_choices = tuple((c.name for c in Channel))
@@ -125,7 +133,7 @@ def parse_args():
         help='frequency of progress logs in seconds'
     )
     parser.add_argument(
-        '--cache-dir', type=str, default=(root_dir/'.cache'),
+        '--cache-dir', type=str, default=platformdirs.user_data_dir('rocketscrape'),
         help='directory to store the message cache in'
     )
     parser.add_argument(
@@ -133,12 +141,16 @@ def parse_args():
         help='messages cached less than this many hours ago will be fetched again'
     )
     parser.add_argument(
-        '--commit-batch-size', type=int, default=2500,
+        '--commit-batch-size', type=int, default=1000,
         help='maximum number of new messages that will be committed to disk at once'
     )
     parser.add_argument(
         '--user-filter', type=int, nargs='+', default=None,
         help='if specified, list of user IDs for which to include data'
+    )
+    parser.add_argument(
+        '--no-fetch', action='store_true',
+        help='skip the fetch phase and only process what is already cached'
     )
 
     base_cls = MessageAnalysis

@@ -1,12 +1,16 @@
 import discord
 
+import asyncio
 import logging
+import signal
 from typing import Any, Callable, Awaitable, Optional, Union
 from threading import Lock
 from asyncio.exceptions import CancelledError
 
 DiscordChannel = Union[discord.abc.GuildChannel, discord.abc.PrivateChannel, discord.Thread]
 DiscordUser = Union[discord.User, discord.ClientUser]
+
+log = logging.getLogger(__name__)
 
 
 class Client(discord.Client):
@@ -17,6 +21,7 @@ class Client(discord.Client):
         self.args = args
 
     def run(self, token: str, **kwargs) -> None:
+        kwargs.setdefault('log_handler', None)
         try:
             super().run(token, **kwargs)
         except CancelledError:
@@ -24,14 +29,32 @@ class Client(discord.Client):
 
     async def on_ready(self) -> None:
         if not self.__lock.acquire(blocking=False):
-            logging.info('Back online')
+            log.info('Back online')
             return
 
-        logging.info(f'Logged in as {self.user}')
+        log.info(f'Logged in as {self.user}')
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+
+        def on_sigint():
+            log.warning('Interrupted, finishing in-flight commit...')
+            if task and not task.done():
+                task.cancel()
+            loop.remove_signal_handler(signal.SIGINT)  # next ^C uses default handler
+
+        try:
+            loop.add_signal_handler(signal.SIGINT, on_sigint)
+        except NotImplementedError:
+            pass  # not supported on Windows
+
         try:
             await self.__func(self)
             await self.close()
         finally:
+            try:
+                loop.remove_signal_handler(signal.SIGINT)
+            except (NotImplementedError, ValueError):
+                pass
             self.__lock.release()
 
     async def try_fetch_user(self, user_id: int) -> Optional[DiscordUser]:

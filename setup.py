@@ -15,7 +15,9 @@ setup(
     python_requires=">=3.9, <4",
     install_requires=[
         "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
+        "duckdb",
         "matplotlib",
+        "platformdirs",
         "tqdm",
         "tabulate[widechars]",
     ],
