@@ -131,6 +131,13 @@ class MessageStream(ABC):
 _EPOCH = datetime.fromtimestamp(discord.utils.DISCORD_EPOCH / 1000, timezone.utc)
 
 
+class _FetchExhausted(Exception):
+    """Raised by `_iter_history` when retries are exhausted on transient errors,
+    so `populate` knows pagination did not actually finish and must commit only
+    what was processed (preventing the segment from being extended past the
+    real coverage)."""
+
+
 @dataclass(frozen=True)
 class _FetchRange:
     """One contiguous range to paginate through `channel.history`.
@@ -259,6 +266,11 @@ class ChannelMessageStream(MessageStream):
             if last_seen is not None:
                 self._cache.commit(start, last_seen)
             return
+        except _FetchExhausted as exc:
+            log.error(f'{exc} — committing partial progress')
+            if last_seen is not None:
+                self._cache.commit(start, last_seen)
+            return
         except (asyncio.CancelledError, GeneratorExit):
             if last_seen is not None:
                 self._cache.commit(start, last_seen)
@@ -310,7 +322,7 @@ class ChannelMessageStream(MessageStream):
                 delay = 60 * (attempt + 1)
                 log.warning(f'rate limited ({exc}) — retrying in {delay}s')
                 await asyncio.sleep(delay)
-        log.error(f'{self}: giving up after repeated server errors')
+        raise _FetchExhausted(f'{self}: giving up after repeated server errors')
 
     async def get_history(self, start: Optional[datetime], end: Optional[datetime],
                           include_reactions=True, skip_fetch=False) -> AsyncIterator[Message]:
@@ -379,9 +391,14 @@ async def _read_all(database: _Database, streams: list[ChannelMessageStream],
 
     started = time.monotonic()
     with tqdm.tqdm(total=total, desc='Processing') as bar, logging_redirect_tqdm():
-        for message in database.iter_messages(channel_ids, start, end):
+        for i, message in enumerate(database.iter_messages(channel_ids, start, end)):
             bar.update(1)
             yield message
+            # Force a real event-loop iteration periodically so SIGINT can
+            # be delivered. Without this, the tight async-generator chain
+            # never goes idle long enough for asyncio's signal pipe to drain.
+            if i % 1000 == 0:
+                await asyncio.sleep(0)
     log.info(f'Processing done in {time.monotonic() - started:.1f}s')
 
 
