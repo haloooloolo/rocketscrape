@@ -72,6 +72,10 @@ class Message:
     async def _fetch_reactions(self, d_msg: discord.Message) -> None:
         cached = self._reactions or {}
         new: dict[str, set[UserIDType]] = {}
+        # Bind early so a mid-loop exception still leaves _reactions == {}
+        # rather than None — keeps the message out of "needs refresh" purgatory
+        # on the next run.
+        self._reactions = new
         for reaction in d_msg.reactions:
             emoji = str(reaction.emoji)
             prior = cached.get(emoji)
@@ -90,7 +94,6 @@ class Message:
                 except discord.errors.HTTPException as exc:
                     log.warning(f'Encountered exception while requesting message reaction: {exc}')
                     break
-        self._reactions = new
 
     def _adopt(self, d_msg: discord.Message) -> None:
         prior_reactions = self._reactions
@@ -197,8 +200,8 @@ class ChannelMessageStream(MessageStream):
         """Returns the pagination plan covering every uncovered or
         needs-refresh sub-range of [start, end], or None if no work is needed."""
         segments = self._cache.segments_in_range(start, end)
-        refresh_start = self._cache.oldest_needing_refresh(
-            start, end, self.refresh_window, include_reactions
+        refresh_clusters = self._cache.refresh_clusters(
+            start, end, self.refresh_window, include_reactions, _HISTORY_PAGE_SIZE
         )
 
         raw: list[_FetchRange] = []
@@ -218,10 +221,15 @@ class ChannelMessageStream(MessageStream):
         if self._tail_might_have_new_messages(cursor, end):
             raw.append(_FetchRange(after=cursor, before=end))
 
-        # Refresh range: paginate again over already-cached messages so we
-        # pick up edits / late reactions. May overlap with the gap ranges.
-        if refresh_start is not None:
-            raw.append(_FetchRange(after=refresh_start, before=end))
+        # Refresh clusters: each is a tight range around a contiguous group of
+        # stale messages. Bound the range slightly outside the cluster so the
+        # boundary messages are actually returned by history(after, before).
+        # `_merge_ranges` will coalesce overlapping clusters with the gap/tail
+        # ranges automatically.
+        delta = timedelta(milliseconds=1)
+        for cluster_start, cluster_end in refresh_clusters:
+            after = max(cluster_start - delta, _EPOCH)
+            raw.append(_FetchRange(after=after, before=cluster_end + delta))
 
         if not raw:
             return None
@@ -256,40 +264,46 @@ class ChannelMessageStream(MessageStream):
             return
 
         last_seen: Optional[datetime] = None
+        completed = False
         try:
             for fetch_range in plan.ranges:
                 async for d_msg in self._iter_history(fetch_range.after, fetch_range.before):
                     await self._absorb(d_msg, start, include_reactions)
                     last_seen = d_msg.created_at
+            completed = True
         except discord.Forbidden:
             log.warning(f'No access to messages in "{self}", stopping')
-            if last_seen is not None:
-                self._cache.commit(start, last_seen)
-            return
         except _FetchExhausted as exc:
             log.error(f'{exc} — committing partial progress')
-            if last_seen is not None:
-                self._cache.commit(start, last_seen)
-            return
-        except (asyncio.CancelledError, GeneratorExit):
-            if last_seen is not None:
-                self._cache.commit(start, last_seen)
             raise
-
-        self._cache.commit(start, _now_or_min(end, datetime.now(timezone.utc)))
+        finally:
+            # Always flush whatever's in __uncommitted, regardless of whether
+            # we exited via success, Forbidden, _FetchExhausted, Cancel, or an
+            # unhandled transport error. This guarantees that messages added
+            # to the buffer (with possibly partial reaction state) get
+            # persisted, breaking refresh-loop traps.
+            if completed:
+                self._cache.commit(start, _now_or_min(end, datetime.now(timezone.utc)))
+            elif last_seen is not None:
+                self._cache.commit(start, last_seen)
 
     async def _absorb(self, d_msg: discord.Message, start: Optional[datetime],
                       include_reactions: bool) -> None:
-        """Update or insert a fetched message in the cache."""
+        """Update or insert a fetched message in the cache.
+
+        We add the target to the uncommitted buffer *before* fetching reactions
+        so a transient failure during reaction fetch doesn't lose the message
+        itself — it'll be flushed on the next commit with whatever reaction
+        state we managed to populate."""
         cached = self._cache[d_msg.id]
         if cached is not None:
             cached._adopt(d_msg)
             target = cached
         else:
             target = Message(d_msg)
+        self._cache.add(target)
         if include_reactions:
             await target._fetch_reactions(d_msg)
-        self._cache.add(target)
         self._cache.commit_maybe(start, target.created)
 
     async def _iter_history(self, after: Optional[datetime],
@@ -370,7 +384,10 @@ async def _fetch_all(streams: list[ChannelMessageStream],
             for coro in asyncio.as_completed(tasks):
                 await coro
                 bar.update(1)
-        except (asyncio.CancelledError, KeyboardInterrupt):
+        except BaseException:
+            # Any error in phase 1 — cancellation, _FetchExhausted, transport
+            # failure — stops the run. Cancel siblings so they commit partial
+            # progress, then re-raise.
             bar.close()
             for t in tasks:
                 t.cancel()

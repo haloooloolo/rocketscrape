@@ -184,14 +184,20 @@ class _Cache:
         return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc))
                 for s, e in rows]
 
-    def oldest_needing_refresh(self, start: Optional[datetime], end: Optional[datetime],
-                               refresh_window: timedelta,
-                               include_reactions: bool) -> Optional[datetime]:
-        """Oldest created_ts of a cached message in [start, end] that needs refresh.
+    def refresh_clusters(self, start: Optional[datetime], end: Optional[datetime],
+                         refresh_window: timedelta, include_reactions: bool,
+                         max_gap_messages: int) -> list[tuple[datetime, datetime]]:
+        """Group cached messages needing refresh into contiguous clusters
+        separated by more than `max_gap_messages` non-stale messages. Returns
+        each cluster as (oldest_ts, newest_ts), ordered chronologically.
 
-        A message needs refresh if it was cached within `refresh_window` of its
-        last known change (suggesting more edits/reactions may have arrived since)
-        or — when reactions are required — if its reactions were never cached."""
+        A message needs refresh if it was cached within `refresh_window` of
+        its last known change (suggesting more edits/reactions may have
+        arrived since) or — when reactions are required — if its reactions
+        were never cached. Clustering by message-count adjacency avoids
+        paginating long swaths of cache just to update sparse stale messages,
+        and the threshold corresponds directly to wasted history pages: a gap
+        larger than one page is cheaper to skip than to re-paginate."""
         db_start, db_end = _ts_range(start, end)
         window_ms = int(refresh_window.total_seconds() * 1000)
         is_stale = (
@@ -201,13 +207,39 @@ class _Cache:
         predicates = [is_stale]
         if include_reactions:
             predicates.append("reactions IS NULL")
-        where = " OR ".join(f"({p})" for p in predicates)
-        row = self.conn.execute(
-            f"SELECT MIN(created_ts) FROM messages WHERE channel_id = ? "
-            f"AND created_ts BETWEEN ? AND ? AND ({where})",
+        stale_predicate = " OR ".join(f"({p})" for p in predicates)
+        rows = self.conn.execute(
+            f"""
+            WITH numbered AS (
+                SELECT created_ts,
+                       CASE WHEN ({stale_predicate}) THEN 1 ELSE 0 END AS is_stale,
+                       ROW_NUMBER() OVER (ORDER BY created_ts) AS rn
+                FROM messages
+                WHERE channel_id = ? AND created_ts BETWEEN ? AND ?
+            ),
+            stale AS (SELECT created_ts, rn FROM numbered WHERE is_stale = 1),
+            with_gap AS (
+                SELECT created_ts, rn,
+                       rn - LAG(rn) OVER (ORDER BY rn) AS msg_gap
+                FROM stale
+            ),
+            clustered AS (
+                SELECT created_ts,
+                       SUM(CASE
+                             WHEN msg_gap IS NULL OR msg_gap > {max_gap_messages}
+                             THEN 1 ELSE 0
+                           END) OVER (ORDER BY rn) AS cid
+                FROM with_gap
+            )
+            SELECT MIN(created_ts), MAX(created_ts) FROM clustered
+            GROUP BY cid ORDER BY MIN(created_ts)
+            """,
             [self.channel_id, db_start, db_end],
-        ).fetchone()
-        return _from_db_ts(row[0]) if row and row[0] is not None else None
+        ).fetchall()
+        return [
+            (s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc))
+            for s, e in rows
+        ]
 
     def __getitem__(self, message_id: MessageIDType) -> Optional[Message]:
         if (msg := self.__uncommitted.get(message_id)) is not None:
