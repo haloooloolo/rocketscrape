@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rocketscrape"
+version = "2.0.1"
+description = "Discord message stream processing framework"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "haloooloolo" }]
+requires-python = ">=3.9, <4"
+dependencies = [
+    "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
+    "duckdb",
+    "matplotlib",
+    "platformdirs",
+    "tqdm",
+    "tabulate[widechars]",
+]
+
+[project.optional-dependencies]
+dev = ["ruff"]
+
+[project.scripts]
+rocketscrape = "rocketscrape.__main__:main"
+
+[tool.setuptools]
+packages = ["rocketscrape"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "UP", # pyupgrade
+]
