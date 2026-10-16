@@ -20,12 +20,12 @@ The tool primarily expects a source (flag) and analysis type (positional argumen
 Below are examples of how to use RocketScrape:
 
 ```bash
-rocketscrape -c CHANNEL1 [CHANNEL2, ...] (--threads) ANALYSIS
+rocketscrape -c CHANNEL1 [CHANNEL2, ...] (--include-threads) ANALYSIS
 ```
 Replace `CHANNEL1`, `CHANNEL2`, etc., with either the Discord channel / thread ID or one of the predefined channel names from
-the `Channel` enum in [utils.py](rocketscrape/utils.py). You can choose to include threads within specified channels using the `--threads` flag. Similarly, you can run rocketscrape on one or multiple servers using:
+the `Channel` enum in [utils.py](rocketscrape/utils.py). You can choose to include threads within specified channels using the `-t / --include-threads` flag. Similarly, you can run rocketscrape on one or multiple servers using:
 ```bash
-rocketscrape --server SERVER1 [SERVER2, ...] (--threads) ANALYSIS
+rocketscrape --server SERVER1 [SERVER2, ...] (--include-threads) ANALYSIS
 ```
 `SERVER` can either be a server ID or a name defined in the `Server` enum. There are optional `-s / --start` and
 `-e / --end` arguments that accept an ISO format datetime string to restrict the date range. For instance,
@@ -47,3 +47,14 @@ Each analysis type in RocketScrape is implemented as a subclass of `MessageAnaly
 implement `_require_reactions(self)`, `_prepare(self)`, `_on_message(self, message)`, `_finalize(self)`,
 `_display_result(self, result, client, max_results)` and `subcommand()`. Optionally, `custom_args(cls)` can be overridden
 to add analysis-specific command line arguments. Examples can be found in [analysis.py](rocketscrape/analysis.py).
+
+## Development
+Install the package in editable mode along with the development tools:
+```bash
+pip install -e '.[dev]'
+```
+Code is linted and formatted with [Ruff](https://docs.astral.sh/ruff/), configured in [pyproject.toml](pyproject.toml):
+```bash
+ruff check
+ruff format
+```
