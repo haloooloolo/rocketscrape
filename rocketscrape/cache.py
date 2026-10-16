@@ -1,16 +1,18 @@
 """DuckDB-backed message cache with shared connection."""
+
 from __future__ import annotations
 
-import os
 import json
 import logging
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Iterable, Iterator, TYPE_CHECKING
+import os
+from collections.abc import Iterable, Iterator
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import duckdb
 
 if TYPE_CHECKING:
-    from rocketscrape.messages import Message, MessageIDType, ChannelIDType, ChannelType
+    from rocketscrape.messages import ChannelIDType, ChannelType, Message, MessageIDType
 
 
 log = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ _SELECT_COLS = (
 
 def _open_db(cache_dir: str) -> duckdb.DuckDBPyConnection:
     """Open the DuckDB cache, recreating it if its schema version doesn't match."""
-    path = os.path.join(cache_dir, 'cache.duckdb')
+    path = os.path.join(cache_dir, "cache.duckdb")
     conn = duckdb.connect(path)
     conn.execute("CREATE TABLE IF NOT EXISTS _meta (version INTEGER NOT NULL)")
     row = conn.execute("SELECT version FROM _meta").fetchone()
@@ -60,9 +62,7 @@ def _open_db(cache_dir: str) -> duckdb.DuckDBPyConnection:
         conn.execute(_SCHEMA)
         conn.execute("INSERT INTO _meta VALUES (?)", [SCHEMA_VERSION])
     elif row[0] != SCHEMA_VERSION:
-        log.warning(
-            f'Cache schema version {row[0]} != {SCHEMA_VERSION}, discarding {path}'
-        )
+        log.warning(f"Cache schema version {row[0]} != {SCHEMA_VERSION}, discarding {path}")
         conn.close()
         os.remove(path)
         conn = duckdb.connect(path)
@@ -72,17 +72,17 @@ def _open_db(cache_dir: str) -> duckdb.DuckDBPyConnection:
     return conn
 
 
-def _to_db_ts(dt: Optional[datetime]) -> Optional[datetime]:
+def _to_db_ts(dt: datetime | None) -> datetime | None:
     """DuckDB TIMESTAMP is naive — strip tzinfo (datetimes are assumed UTC)."""
     return dt.replace(tzinfo=None) if dt is not None else None
 
 
-def _from_db_ts(dt: Optional[datetime]) -> Optional[datetime]:
+def _from_db_ts(dt: datetime | None) -> datetime | None:
     """Reattach UTC tzinfo when reading naive TIMESTAMP back."""
     return dt.replace(tzinfo=timezone.utc) if dt is not None else None
 
 
-def _ts_range(start: Optional[datetime], end: Optional[datetime]) -> tuple[datetime, datetime]:
+def _ts_range(start: datetime | None, end: datetime | None) -> tuple[datetime, datetime]:
     """Default an open-ended timestamp range to [epoch, now] in DuckDB-naive form."""
     return (
         (start or datetime.fromtimestamp(0, timezone.utc)).replace(tzinfo=None),
@@ -92,9 +92,21 @@ def _ts_range(start: Optional[datetime], end: Optional[datetime]) -> tuple[datet
 
 def _row_to_message(row: tuple) -> Message:
     from rocketscrape.messages import Message
+
     msg = Message.__new__(Message)
-    (msg.id, msg.channel_id, msg.author_id, created, last_edited,
-     updated, msg.reference, content, attachments, embeds, reactions) = row
+    (
+        msg.id,
+        msg.channel_id,
+        msg.author_id,
+        created,
+        last_edited,
+        updated,
+        msg.reference,
+        content,
+        attachments,
+        embeds,
+        reactions,
+    ) = row
     msg.created = _from_db_ts(created)
     msg.last_edited = _from_db_ts(last_edited)
     msg.updated = _from_db_ts(updated)
@@ -102,46 +114,50 @@ def _row_to_message(row: tuple) -> Message:
     msg.attachments = json.loads(attachments)
     msg.embeds = json.loads(embeds)
     msg._reactions = (
-        {emoji: set(uids) for emoji, uids in json.loads(reactions).items()}
-        if reactions is not None else None
+        {emoji: set(uids) for emoji, uids in json.loads(reactions).items()} if reactions is not None else None
     )
     return msg
 
 
 def _message_to_row(msg: Message, channel_id: int) -> tuple:
     return (
-        msg.id, channel_id, msg.author_id,
-        _to_db_ts(msg.created), _to_db_ts(msg.last_edited), _to_db_ts(msg.updated),
-        msg.reference, msg.content,
-        json.dumps(msg.attachments), json.dumps(msg.embeds),
-        json.dumps({e: list(u) for e, u in msg._reactions.items()})
-            if msg._reactions is not None else None,
+        msg.id,
+        channel_id,
+        msg.author_id,
+        _to_db_ts(msg.created),
+        _to_db_ts(msg.last_edited),
+        _to_db_ts(msg.updated),
+        msg.reference,
+        msg.content,
+        json.dumps(msg.attachments),
+        json.dumps(msg.embeds),
+        json.dumps({e: list(u) for e, u in msg._reactions.items()}) if msg._reactions is not None else None,
     )
 
 
 class _Database:
     """Shared DuckDB connection and bulk reader for the run."""
+
     def __init__(self, cache_dir: str):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
         self.conn = _open_db(cache_dir)
         self.messages_committed = 0  # cumulative count for end-of-run reporting
 
-    def count_messages(self, channel_ids: Iterable[int],
-                       start: Optional[datetime], end: Optional[datetime]) -> int:
+    def count_messages(self, channel_ids: Iterable[int], start: datetime | None, end: datetime | None) -> int:
         ids = list(channel_ids)
         if not ids:
             return 0
         placeholders = ",".join(["?"] * len(ids))
         db_start, db_end = _ts_range(start, end)
         return self.conn.execute(
-            f"SELECT COUNT(*) FROM messages WHERE channel_id IN ({placeholders}) "
-            "AND created_ts BETWEEN ? AND ?",
+            f"SELECT COUNT(*) FROM messages WHERE channel_id IN ({placeholders}) AND created_ts BETWEEN ? AND ?",
             [*ids, db_start, db_end],
         ).fetchone()[0]
 
-    def iter_messages(self, channel_ids: Iterable[int],
-                      start: Optional[datetime], end: Optional[datetime]) -> Iterator[Message]:
+    def iter_messages(
+        self, channel_ids: Iterable[int], start: datetime | None, end: datetime | None
+    ) -> Iterator[Message]:
         ids = list(channel_ids)
         if not ids:
             return
@@ -160,6 +176,7 @@ class _Cache:
     """Per-channel slice of the shared cache: holds the channel id, an
     in-memory write buffer, and per-channel queries against the shared
     DuckDB connection."""
+
     def __init__(self, database: _Database, channel: ChannelType, max_commit_size: int):
         self.__database = database
         self.channel_id: ChannelIDType = channel.id
@@ -171,8 +188,7 @@ class _Cache:
     def conn(self) -> duckdb.DuckDBPyConnection:
         return self.__database.conn
 
-    def segments_in_range(self, start: Optional[datetime],
-                          end: Optional[datetime]) -> list[tuple[datetime, datetime]]:
+    def segments_in_range(self, start: datetime | None, end: datetime | None) -> list[tuple[datetime, datetime]]:
         """All segments overlapping [start, end] as (start_ts, end_ts) pairs,
         ordered by start_ts. Both columns are NOT NULL in the schema."""
         db_start, db_end = _ts_range(start, end)
@@ -181,12 +197,16 @@ class _Cache:
             "AND NOT (end_ts < ? OR start_ts > ?) ORDER BY start_ts",
             [self.channel_id, db_start, db_end],
         ).fetchall()
-        return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc))
-                for s, e in rows]
+        return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc)) for s, e in rows]
 
-    def refresh_clusters(self, start: Optional[datetime], end: Optional[datetime],
-                         refresh_window: timedelta, include_reactions: bool,
-                         max_gap_messages: int) -> list[tuple[datetime, datetime]]:
+    def refresh_clusters(
+        self,
+        start: datetime | None,
+        end: datetime | None,
+        refresh_window: timedelta,
+        include_reactions: bool,
+        max_gap_messages: int,
+    ) -> list[tuple[datetime, datetime]]:
         """Group cached messages needing refresh into contiguous clusters
         separated by more than `max_gap_messages` non-stale messages. Returns
         each cluster as (oldest_ts, newest_ts), ordered chronologically.
@@ -200,10 +220,7 @@ class _Cache:
         larger than one page is cheaper to skip than to re-paginate."""
         db_start, db_end = _ts_range(start, end)
         window_ms = int(refresh_window.total_seconds() * 1000)
-        is_stale = (
-            f"DATE_DIFF('millisecond', COALESCE(last_edited_ts, created_ts), updated_ts) "
-            f"<= {window_ms}"
-        )
+        is_stale = f"DATE_DIFF('millisecond', COALESCE(last_edited_ts, created_ts), updated_ts) <= {window_ms}"
         predicates = [is_stale]
         if include_reactions:
             predicates.append("reactions IS NULL")
@@ -236,12 +253,9 @@ class _Cache:
             """,
             [self.channel_id, db_start, db_end],
         ).fetchall()
-        return [
-            (s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc))
-            for s, e in rows
-        ]
+        return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc)) for s, e in rows]
 
-    def __getitem__(self, message_id: MessageIDType) -> Optional[Message]:
+    def __getitem__(self, message_id: MessageIDType) -> Message | None:
         if (msg := self.__uncommitted.get(message_id)) is not None:
             return msg
         row = self.conn.execute(
@@ -259,13 +273,13 @@ class _Cache:
     def add(self, message: Message) -> None:
         self.__uncommitted[message.id] = message
 
-    def commit_maybe(self, start: Optional[datetime], end: datetime) -> bool:
+    def commit_maybe(self, start: datetime | None, end: datetime) -> bool:
         if len(self.__uncommitted) < self.max_commit_size:
             return False
         self.commit(start, end)
         return True
 
-    def commit(self, start: Optional[datetime], end: datetime) -> None:
+    def commit(self, start: datetime | None, end: datetime) -> None:
         n = len(self.__uncommitted)
         if n:
             log.info(f'Saving {n} messages from "{self.__channel_repr}" to disk')
@@ -292,8 +306,7 @@ class _Cache:
         """Replace any segments overlapping [start, end] with their merged union."""
         db_start, db_end = _to_db_ts(start), _to_db_ts(end)
         overlaps = self.conn.execute(
-            "SELECT start_ts, end_ts FROM segments WHERE channel_id = ? "
-            "AND NOT (end_ts < ? OR start_ts > ?)",
+            "SELECT start_ts, end_ts FROM segments WHERE channel_id = ? AND NOT (end_ts < ? OR start_ts > ?)",
             [self.channel_id, db_start, db_end],
         ).fetchall()
 

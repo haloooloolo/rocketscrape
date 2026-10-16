@@ -11,9 +11,8 @@ class _IntEnumArg(IntEnum):
             pass  # fallback to regular int
         try:
             return int(s)
-        except ValueError:
-            raise argparse.ArgumentTypeError(
-                f"{s!r} is not a valid {cls.__name__.lower()}")
+        except ValueError as e:
+            raise argparse.ArgumentTypeError(f"{s!r} is not a valid {cls.__name__.lower()}") from e
 
     def __str__(self):
         return self.name
@@ -38,4 +37,4 @@ class Role(Enum):
 
 
 def sanitize_str(string: str) -> str:
-    return string.encode('ascii', 'ignore').decode('ascii')
+    return string.encode("ascii", "ignore").decode("ascii")

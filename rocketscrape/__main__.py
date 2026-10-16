@@ -1,36 +1,36 @@
-import os
-import asyncio
-import logging
-import inspect
 import argparse
+import asyncio
+import inspect
+import logging
+import os
+from datetime import datetime, timezone
+from typing import TypeVar, get_args
+
 import discord
 import platformdirs
 
-from datetime import datetime, timezone
-from typing import TypeVar, get_args
-from rocketscrape.client import Client
-from rocketscrape.utils import Server, Channel
+from rocketscrape.analysis import MessageAnalysis
 from rocketscrape.cache import _Database
+from rocketscrape.client import Client
 from rocketscrape.messages import (
     ChannelMessageStream,
+    ChannelType,
     MultiChannelMessageStream,
-    ServerMessageStream,
     MultiServerMessageStream,
-    ChannelType
+    ServerMessageStream,
 )
-from rocketscrape.analysis import MessageAnalysis
+from rocketscrape.utils import Channel, Server
 
-
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 log = logging.getLogger(__name__)
 
 
 def main():
-    logging.getLogger('discord').setLevel(logging.ERROR)
-    logging.getLogger('rocketscrape').setLevel(logging.INFO)
-    Client(_main, parse_args()).run(os.environ['DISCORD_USER_TOKEN'])
+    logging.getLogger("discord").setLevel(logging.ERROR)
+    logging.getLogger("rocketscrape").setLevel(logging.INFO)
+    Client(_main, parse_args()).run(os.environ["DISCORD_USER_TOKEN"])
 
 
 async def _main(client: Client) -> int:
@@ -46,7 +46,7 @@ async def _main(client: Client) -> int:
         guilds: list[discord.Guild] = []
         for server_id in args.server:
             if not (guild := await client.try_fetch_guild(server_id)):
-                log.error(f'Server {server_id} could not be found')
+                log.error(f"Server {server_id} could not be found")
                 return 1
 
             guilds.append(guild)
@@ -59,10 +59,10 @@ async def _main(client: Client) -> int:
         channels: list[ChannelType] = []
         for channel_id in args.channel:
             if not (channel := await client.try_fetch_channel(channel_id)):
-                log.error(f'Channel {channel_id} could not be found')
+                log.error(f"Channel {channel_id} could not be found")
                 return 1
             if not isinstance(channel, get_args(ChannelType)):
-                log.error(f'Channel {channel_id} has incompatible type {type(channel)}')
+                log.error(f"Channel {channel_id} has incompatible type {type(channel)}")
                 return 2
 
             channels.append(channel)
@@ -78,7 +78,7 @@ async def _main(client: Client) -> int:
         print()  # some spacing to make it look nicer
         await result.display(client, args.max_results)
     except asyncio.CancelledError:
-        log.warning('Interrupted, partial progress saved to cache')
+        log.warning("Interrupted, partial progress saved to cache")
         return 130
     except Exception as exc:
         log.exception(str(exc))
@@ -95,66 +95,60 @@ def get_subclasses(cls: type[T]) -> set[type[T]]:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        prog='rocketscrape',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
+    parser = argparse.ArgumentParser(prog="rocketscrape", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
     source = parser.add_mutually_exclusive_group(required=True)
-    channel_choices = tuple((c.name for c in Channel))
+    channel_choices = tuple(c.name for c in Channel)
     source.add_argument(
-        '-c', '--channel', type=Channel.argtype, nargs='+',
-        help=f'one or more of {channel_choices} or channel ID(s)'
+        "-c", "--channel", type=Channel.argtype, nargs="+", help=f"one or more of {channel_choices} or channel ID(s)"
     )
     server_choices = tuple(s.name for s in Server)
     source.add_argument(
-        '-g', '--server', type=Server.argtype, nargs='+',
-        help=f'one or more of {server_choices} or server ID(s)'
+        "-g", "--server", type=Server.argtype, nargs="+", help=f"one or more of {server_choices} or server ID(s)"
     )
-    
+
     parser.add_argument(
-        '-t', '--include-threads', dest='threads', action='store_true',
-        help='include streams for all sub-threads within the specified channels'
+        "-t",
+        "--include-threads",
+        dest="threads",
+        action="store_true",
+        help="include streams for all sub-threads within the specified channels",
     )
+    parser.add_argument("-s", "--start", type=datetime.fromisoformat, help="start of date range in ISO format")
+    parser.add_argument("-e", "--end", type=datetime.fromisoformat, help="end of date range in ISO format")
+    parser.add_argument("-r", "--max-results", type=int, default=10, help="maximum length of analysis output")
+    parser.add_argument("-l", "--log-interval", type=int, default=1, help="frequency of progress logs in seconds")
     parser.add_argument(
-        '-s', '--start', type=datetime.fromisoformat,
-        help='start of date range in ISO format'
-    )
-    parser.add_argument(
-        '-e', '--end', type=datetime.fromisoformat,
-        help='end of date range in ISO format'
-    )
-    parser.add_argument(
-        '-r', '--max-results', type=int, default=10,
-        help='maximum length of analysis output'
-    )
-    parser.add_argument(
-        '-l', '--log-interval', type=int, default=1,
-        help='frequency of progress logs in seconds'
+        "--cache-dir",
+        type=str,
+        default=platformdirs.user_data_dir("rocketscrape"),
+        help="directory to store the message cache in",
     )
     parser.add_argument(
-        '--cache-dir', type=str, default=platformdirs.user_data_dir('rocketscrape'),
-        help='directory to store the message cache in'
+        "--refresh-window",
+        type=int,
+        default=1,
+        help="messages cached less than this many hours ago will be fetched again",
     )
     parser.add_argument(
-        '--refresh-window', type=int, default=1,
-        help='messages cached less than this many hours ago will be fetched again'
+        "--commit-batch-size",
+        type=int,
+        default=1000,
+        help="maximum number of new messages that will be committed to disk at once",
     )
     parser.add_argument(
-        '--commit-batch-size', type=int, default=1000,
-        help='maximum number of new messages that will be committed to disk at once'
+        "--user-filter",
+        type=int,
+        nargs="+",
+        default=None,
+        help="if specified, list of user IDs for which to include data",
     )
     parser.add_argument(
-        '--user-filter', type=int, nargs='+', default=None,
-        help='if specified, list of user IDs for which to include data'
-    )
-    parser.add_argument(
-        '--no-fetch', action='store_true',
-        help='skip the fetch phase and only process what is already cached'
+        "--no-fetch", action="store_true", help="skip the fetch phase and only process what is already cached"
     )
 
     base_cls = MessageAnalysis
-    subparsers = parser.add_subparsers(title='analysis subcommands', required=True)
+    subparsers = parser.add_subparsers(title="analysis subcommands", required=True)
     for cls in get_subclasses(base_cls):
         if subcommand := cls.subcommand():
             subparser = subparsers.add_parser(subcommand, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -165,5 +159,5 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

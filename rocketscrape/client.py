@@ -1,11 +1,12 @@
-import discord
-
 import asyncio
 import logging
 import signal
-from typing import Any, Callable, Awaitable, Optional, Union
-from threading import Lock
 from asyncio.exceptions import CancelledError
+from collections.abc import Awaitable
+from threading import Lock
+from typing import Any, Callable, Optional, Union
+
+import discord
 
 DiscordChannel = Union[discord.abc.GuildChannel, discord.abc.PrivateChannel, discord.Thread]
 DiscordUser = Union[discord.User, discord.ClientUser]
@@ -14,14 +15,14 @@ log = logging.getLogger(__name__)
 
 
 class Client(discord.Client):
-    def __init__(self, func: Callable[['Client'], Awaitable], args: Any):
+    def __init__(self, func: Callable[["Client"], Awaitable], args: Any):
         super().__init__()
         self.__func = func
         self.__lock = Lock()
         self.args = args
 
     def run(self, token: str, **kwargs) -> None:
-        kwargs.setdefault('log_handler', None)
+        kwargs.setdefault("log_handler", None)
         try:
             super().run(token, **kwargs)
         except CancelledError:
@@ -29,15 +30,15 @@ class Client(discord.Client):
 
     async def on_ready(self) -> None:
         if not self.__lock.acquire(blocking=False):
-            log.info('Back online')
+            log.info("Back online")
             return
 
-        log.info(f'Logged in as {self.user}')
+        log.info(f"Logged in as {self.user}")
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
 
         def on_sigint():
-            log.warning('Interrupted, finishing in-flight commit...')
+            log.warning("Interrupted, finishing in-flight commit...")
             if task and not task.done():
                 task.cancel()
             loop.remove_signal_handler(signal.SIGINT)  # next ^C uses default handler
@@ -89,5 +90,5 @@ class Client(discord.Client):
     @staticmethod
     def __get_username(user_id: int, user: Optional[DiscordUser]):
         if user is None:
-            return f'<{user_id}>'
+            return f"<{user_id}>"
         return user.display_name

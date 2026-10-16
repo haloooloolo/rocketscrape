@@ -1,35 +1,25 @@
-import logging
 import heapq
-import re
 import json
+import logging
+import re
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
+from typing import Any, Generic, Optional, TypeVar, Union, cast
 
 import discord
-
 import matplotlib.pyplot as plt
 import numpy as np
-
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional, Any, Generic, TypeVar, Union, Callable, Awaitable, cast
-from datetime import datetime, timedelta, date
 from tabulate import tabulate
 
 from rocketscrape.client import Client
-from rocketscrape.utils import (
-    Server,
-    Role,
-    sanitize_str
-)
-from rocketscrape.messages import (
-    MessageStream,
-    Message,
-    UserIDType,
-    ChannelIDType
-)
+from rocketscrape.messages import ChannelIDType, Message, MessageStream, UserIDType
+from rocketscrape.utils import Role, Server, sanitize_str
 
 log = logging.getLogger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -43,29 +33,29 @@ class CustomArgument(ABC):
 
 class CustomPositionalArgument(CustomArgument):
     def __init__(self, _name: str, _type: type[Any], _help: Optional[str] = None):
-        args = _name,
+        args = (_name,)
         kwargs = dict(type=_type, help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomFlag(CustomArgument):
     def __init__(self, _name: str, _help: Optional[str] = None):
-        args = f'--{_name}',
-        kwargs = dict(action='store_true', help=_help)
+        args = (f"--{_name}",)
+        kwargs = dict(action="store_true", help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomOption(CustomArgument):
     def __init__(self, _name: str, _type: type[Any], _default: Any, _help: Optional[str] = None):
-        args = f'--{_name}',
+        args = (f"--{_name}",)
         kwargs = dict(type=_type, default=_default, help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomList(CustomArgument):
     def __init__(self, _name: str, _type: type[Any], _help: Optional[str] = None):
-        args = f'--{_name}',
-        kwargs = dict(nargs='+', type=_type, help=_help)
+        args = (f"--{_name}",)
+        kwargs = dict(nargs="+", type=_type, help=_help)
         super().__init__(args, kwargs)
 
 
@@ -74,7 +64,7 @@ class Result(Generic[T]):
     start: Optional[datetime]
     end: Optional[datetime]
     data: T
-    __display: Callable[['Result[T]', Client, int], Awaitable[None]]
+    __display: Callable[["Result[T]", Client, int], Awaitable[None]]
 
     async def display(self, client: Client, max_results: int):
         await self.__display(self, client, max_results)
@@ -92,12 +82,10 @@ class MessageAnalysis(ABC, Generic[T]):
         last_ts = datetime.now()
         self._prepare()
 
-        async for message in self.stream.get_history(
-            start, end, self._require_reactions, skip_fetch=self.skip_fetch
-        ):
+        async for message in self.stream.get_history(start, end, self._require_reactions, skip_fetch=self.skip_fetch):
             ts = datetime.now()
             if (ts - last_ts) >= self.log_interval:
-                log.info(f'Message stream reached {message.created}')
+                log.info(f"Message stream reached {message.created}")
                 last_ts = ts
 
             if self.user_filter and (message.author_id not in self.user_filter):
@@ -127,13 +115,13 @@ class MessageAnalysis(ABC, Generic[T]):
     @staticmethod
     def _get_date_range_str(start: Optional[datetime], end: Optional[datetime]) -> str:
         if start and end:
-            range_str = f'from {start} to {end}'
+            range_str = f"from {start} to {end}"
         elif start:
-            range_str = f'since {start}'
+            range_str = f"since {start}"
         elif end:
-            range_str = f'up to {end}'
+            range_str = f"up to {end}"
         else:
-            range_str = '(all time)'
+            range_str = "(all time)"
 
         return range_str
 
@@ -170,12 +158,12 @@ class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
         range_str = self._get_date_range_str(result.start, result.end)
         top_users = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print(f'{self._title()} {range_str}')
+        print(f"{self._title()} {range_str}")
         for i, (user_id, count) in enumerate(top_users):
-            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {count}')
+            print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {count}")
 
 
-S = TypeVar('S', bound=MessageAnalysis)
+S = TypeVar("S", bound=MessageAnalysis)
 
 
 class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S, T]):
@@ -233,10 +221,7 @@ class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]
 
     @abstractmethod
     async def _display_result(
-            self,
-            result: Result[tuple[list[datetime], list[T]]],
-            client: Client,
-            max_results: int
+        self, result: Result[tuple[list[datetime], list[T]]], client: Client, max_results: int
     ) -> None:
         pass
 
@@ -250,10 +235,18 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomOption('base-session-time', float, 3.0,
-                         'added time (in minutes) to account for activity immediately before and after a session'),
-            CustomOption('session-timeout', float, 15.0,
-                         'maximum amount of time (in minutes) between two messages in the same session'),
+            CustomOption(
+                "base-session-time",
+                float,
+                3.0,
+                "added time (in minutes) to account for activity immediately before and after a session",
+            ),
+            CustomOption(
+                "session-timeout",
+                float,
+                15.0,
+                "maximum amount of time (in minutes) between two messages in the same session",
+            ),
         }
 
     @property
@@ -298,15 +291,15 @@ class TopContributorAnalysis(MessageAnalysis[dict[UserIDType, float]]):
         range_str = self._get_date_range_str(result.start, result.end)
         top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print(f'Top {self.stream} contributors {range_str}')
+        print(f"Top {self.stream} contributors {range_str}")
         for i, (user_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60
-            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {hours}h {minutes}m')
+            print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {hours}h {minutes}m")
 
     @staticmethod
     def subcommand() -> str:
-        return 'contributors'
+        return "contributors"
 
 
 class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnalysis, dict[UserIDType, float]]):
@@ -317,8 +310,9 @@ class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnaly
     def _get_data(self) -> dict[UserIDType, float]:
         return self._base_analysis.total_time.copy()
 
-    async def _display_result(self, result: Result[tuple[list[datetime], list[dict[UserIDType, float]]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[tuple[list[datetime], list[dict[UserIDType, float]]]], client: Client, max_results: int
+    ) -> None:
         x, y = result.data
 
         times_by_user: dict[UserIDType, list[float]] = {}
@@ -332,15 +326,15 @@ class ContributorHistoryAnalysis(HistoryBasedMessageAnalysis[TopContributorAnaly
             username = await client.try_fetch_username(user_id)
             plt.plot(np.array(x), np.array(data), label=sanitize_str(username))
 
-        plt.xticks(rotation=30, ha='right')
-        plt.ylabel('time (mins)')
+        plt.xticks(rotation=30, ha="right")
+        plt.ylabel("time (mins)")
         plt.legend()
-        plt.title(sanitize_str(f'Top {self.stream} contributors over time'))
+        plt.title(sanitize_str(f"Top {self.stream} contributors over time"))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'contributor-history'
+        return "contributor-history"
 
 
 class MessageCountAnalysis(CountBasedMessageAnalysis):
@@ -352,11 +346,11 @@ class MessageCountAnalysis(CountBasedMessageAnalysis):
         return False
 
     def _title(self) -> str:
-        return f'Top {self.stream} contributors by message count'
+        return f"Top {self.stream} contributors by message count"
 
     @staticmethod
     def subcommand() -> str:
-        return 'message-count'
+        return "message-count"
 
 
 class SelfKekAnalysis(CountBasedMessageAnalysis):
@@ -366,15 +360,15 @@ class SelfKekAnalysis(CountBasedMessageAnalysis):
 
     def _on_message(self, message: Message) -> None:
         for emoji_name, users in message.reactions.items():
-            if ('kek' in emoji_name) and (message.author_id in users):
+            if ("kek" in emoji_name) and (message.author_id in users):
                 self.count[message.author_id] = self.count.get(message.author_id, 0) + 1
 
     def _title(self) -> str:
-        return f'Top {self.stream} self kek offenders'
+        return f"Top {self.stream} self kek offenders"
 
     @staticmethod
     def subcommand() -> str:
-        return 'self-kek'
+        return "self-kek"
 
 
 class MissingPersonAnalysis(TopContributorAnalysis):
@@ -385,8 +379,9 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return TopContributorAnalysis.custom_args() | {
-            CustomOption('inactivity_threshold', int, 90,
-                         'number of days without activity required to be considered inactive'),
+            CustomOption(
+                "inactivity_threshold", int, 90, "number of days without activity required to be considered inactive"
+            ),
         }
 
     @property
@@ -415,15 +410,15 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     async def _display_result(self, result: Result[dict[UserIDType, float]], client: Client, max_results: int) -> None:
         top_contributors = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print(f'Top {self.stream} contributors with no recent activity ')
+        print(f"Top {self.stream} contributors with no recent activity ")
         for i, (author_id, time) in enumerate(top_contributors):
             time_mins = round(time)
             hours, minutes = time_mins // 60, time_mins % 60
-            print(f'{i + 1}. {await client.try_fetch_username(author_id)}: {hours}h {minutes}m')
+            print(f"{i + 1}. {await client.try_fetch_username(author_id)}: {hours}h {minutes}m")
 
     @staticmethod
     def subcommand() -> str:
-        return 'missing-persons'
+        return "missing-persons"
 
 
 class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
@@ -432,16 +427,16 @@ class ReactionsGivenAnalysis(CountBasedMessageAnalysis):
         return True
 
     def _on_message(self, message: Message) -> None:
-        for emoji_name, users in message.reactions.items():
+        for _emoji_name, users in message.reactions.items():
             for user_id in users:
                 self.count[user_id] = self.count.get(user_id, 0) + 1
 
     def _title(self) -> str:
-        return f'{self.stream} members with most reactions given'
+        return f"{self.stream} members with most reactions given"
 
     @staticmethod
     def subcommand() -> str:
-        return 'total-reactions-given'
+        return "total-reactions-given"
 
 
 class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
@@ -450,21 +445,21 @@ class ReactionsReceivedAnalysis(CountBasedMessageAnalysis):
         return True
 
     def _on_message(self, message: Message) -> None:
-        for emoji_name, users in message.reactions.items():
+        for _emoji_name, users in message.reactions.items():
             self.count[message.author_id] = self.count.get(message.author_id, 0) + len(users)
 
     def _title(self) -> str:
-        return f'{self.stream} members with most reactions received'
+        return f"{self.stream} members with most reactions received"
 
     @staticmethod
     def subcommand() -> str:
-        return 'total-reactions-received'
+        return "total-reactions-received"
 
 
 class ThankYouCountAnalysis(CountBasedMessageAnalysis):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
-        self.__pattern = re.compile('\b(ty)|(thank(?:s| (?:yo)?u)?)|(thx)\b')
+        self.__pattern = re.compile("\b(ty)|(thank(?:s| (?:yo)?u)?)|(thx)\b")
 
     @property
     def _require_reactions(self) -> bool:
@@ -484,11 +479,11 @@ class ThankYouCountAnalysis(CountBasedMessageAnalysis):
             self.count[user_id] = self.count.get(user_id, 0) + 1
 
     def _title(self) -> str:
-        return f'{self.stream} members thanked most often'
+        return f"{self.stream} members thanked most often"
 
     @staticmethod
     def subcommand() -> str:
-        return 'thank-count'
+        return "thank-count"
 
 
 class KronScoreAnalysis(CountBasedMessageAnalysis):
@@ -507,11 +502,11 @@ class KronScoreAnalysis(CountBasedMessageAnalysis):
             self.count[user_id] = self.count.get(user_id, 0) + 1
 
     def _title(self) -> str:
-        return f'{self.stream} Kron score'
+        return f"{self.stream} Kron score"
 
     @staticmethod
     def subcommand() -> str:
-        return 'kron-score'
+        return "kron-score"
 
 
 class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
@@ -526,7 +521,7 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return CountBasedMessageAnalysis.custom_args() | {
-            CustomPositionalArgument('react', str, 'emoji to count received reactions for'),
+            CustomPositionalArgument("react", str, "emoji to count received reactions for"),
         }
 
     def _on_message(self, message: Message) -> None:
@@ -535,11 +530,11 @@ class ReactionReceivedAnalysis(CountBasedMessageAnalysis):
             self.count[message.author_id] = self.count.get(message.author_id, 0) + num_reactions
 
     def _title(self) -> str:
-        return f'{self.stream} members by {self.emoji} received'
+        return f"{self.stream} members by {self.emoji} received"
 
     @staticmethod
     def subcommand() -> str:
-        return 'reaction-received-count'
+        return "reaction-received-count"
 
 
 class ReactionGivenAnalysis(CountBasedMessageAnalysis):
@@ -550,7 +545,7 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return CountBasedMessageAnalysis.custom_args() | {
-            CustomPositionalArgument('react', str, 'emoji to count given reactions for'),
+            CustomPositionalArgument("react", str, "emoji to count given reactions for"),
         }
 
     @property
@@ -562,11 +557,11 @@ class ReactionGivenAnalysis(CountBasedMessageAnalysis):
             self.count[user] = self.count.get(user, 0) + 1
 
     def _title(self) -> str:
-        return f'{self.stream} members by {self.emoji} given'
+        return f"{self.stream} members by {self.emoji} given"
 
     @staticmethod
     def subcommand() -> str:
-        return 'reaction-given-count'
+        return "reaction-given-count"
 
 
 class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
@@ -574,17 +569,15 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         super().__init__(stream, args)
         self.user_id: UserIDType = args.user
         self.num_buckets: int = args.num_buckets
-        assert (24 * 60 % self.num_buckets) == 0, \
-            'bucket count doesn\'t cleanly divide into minutes'
+        assert (24 * 60 % self.num_buckets) == 0, "bucket count doesn't cleanly divide into minutes"
         self.key_format: str = args.key_format
 
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomPositionalArgument('user', UserIDType),
-            CustomOption('num-buckets', int, 24),
-            CustomOption('key-format', str, '',
-                         'split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)'),
+            CustomPositionalArgument("user", UserIDType),
+            CustomOption("num-buckets", int, 24),
+            CustomOption("key-format", str, "", "split messages based on time, supports $y, $q, $m, $d (e.g. Q$q $y)"),
         }
 
     @property
@@ -595,11 +588,12 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         self.buckets: dict[str, list[int]] = {}
 
     def _get_key(self, timestamp: datetime) -> str:
-        return self.key_format \
-            .replace('$y', str(timestamp.year)) \
-            .replace('$q', str(int((timestamp.month + 2) / 3))) \
-            .replace('$m', str(timestamp.month)) \
-            .replace('$d', str(timestamp.day))
+        return (
+            self.key_format.replace("$y", str(timestamp.year))
+            .replace("$q", str(int((timestamp.month + 2) / 3)))
+            .replace("$m", str(timestamp.month))
+            .replace("$d", str(timestamp.day))
+        )
 
     def _on_message(self, message: Message) -> None:
         if message.author_id != self.user_id:
@@ -624,9 +618,9 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
         for i in x:
             start = i * bucket_width
             end = start + bucket_width - 1
-            start_fmt = f'{(start // 60):02}:{(start % 60):02}'
-            end_fmt = f'{(end // 60):02}:{(end % 60):02}'
-            labels.append(f'{start_fmt} - {end_fmt}')
+            start_fmt = f"{(start // 60):02}:{(start % 60):02}"
+            end_fmt = f"{(end // 60):02}:{(end % 60):02}"
+            labels.append(f"{start_fmt} - {end_fmt}")
 
         full_width = 0.75
         bar_width = full_width / len(result.data)
@@ -637,13 +631,13 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
 
         plt.xticks(x, labels, rotation=90)
         plt.xlim(-1, self.num_buckets)
-        plt.ylabel('message count')
+        plt.ylabel("message count")
 
         if self.key_format:
-            plt.legend(loc='upper left')
+            plt.legend(loc="upper left")
 
         username = await client.try_fetch_username(self.user_id)
-        title = f'{username} message activity in {self.stream} by local time'
+        title = f"{username} message activity in {self.stream} by local time"
         plt.title(sanitize_str(title))
 
         plt.subplots_adjust(bottom=0.25)
@@ -651,7 +645,7 @@ class ActivityTimeAnalyis(MessageAnalysis[dict[str, list[int]]]):
 
     @staticmethod
     def subcommand() -> str:
-        return 'message-time-histogram'
+        return "message-time-histogram"
 
 
 class WordCountAnalysis(CountBasedMessageAnalysis):
@@ -665,9 +659,9 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomPositionalArgument('word', str),
-            CustomFlag('ignore-case', 'make word match case-insensitive'),
-            CustomFlag('message-based', 'only count the first occurrence in each message'),
+            CustomPositionalArgument("word", str),
+            CustomFlag("ignore-case", "make word match case-insensitive"),
+            CustomFlag("message-based", "only count the first occurrence in each message"),
         }
 
     @property
@@ -675,7 +669,7 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
         return False
 
     def _title(self) -> str:
-        return f"Number of \"{self.word}\" occurrences in {self.stream}"
+        return f'Number of "{self.word}" occurrences in {self.stream}'
 
     def _on_message(self, message: Message) -> None:
         word, content = self.word, message.content
@@ -688,7 +682,7 @@ class WordCountAnalysis(CountBasedMessageAnalysis):
 
     @staticmethod
     def subcommand() -> str:
-        return 'word-count'
+        return "word-count"
 
 
 class WordCountHistoryAnalysis(HistoryBasedMessageAnalysis[WordCountAnalysis, dict[UserIDType, int]]):
@@ -700,21 +694,18 @@ class WordCountHistoryAnalysis(HistoryBasedMessageAnalysis[WordCountAnalysis, di
         return self._base_analysis.count
 
     async def _display_result(
-            self,
-            result: Result[tuple[list[datetime], list[dict[UserIDType, int]]]],
-            client: Client,
-            max_results: int
+        self, result: Result[tuple[list[datetime], list[dict[UserIDType, int]]]], client: Client, max_results: int
     ) -> None:
         x, y = result.data
         plt.plot(np.array(x), np.array(y))
-        plt.xticks(rotation=30, ha='right')
+        plt.xticks(rotation=30, ha="right")
         title = f'Occurences of "{self._base_analysis.word}" in {self.stream} over time'
         plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'word-count-history'
+        return "word-count-history"
 
 
 class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDType, float]]]):
@@ -732,7 +723,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
 
         @staticmethod
         def subcommand() -> str:
-            return ''
+            return ""
 
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
@@ -746,8 +737,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return cls.__SupportBountyHelper.custom_args() | {
-            CustomOption('min-monthly-activity', int, 60,
-                         'minimum required activity per month in minutes'),
+            CustomOption("min-monthly-activity", int, 60, "minimum required activity per month in minutes"),
         }
 
     def _prepare(self) -> None:
@@ -760,8 +750,9 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
         self.__helper._finalize()
         return self.__helper.time_by_month
 
-    async def _display_result(self, result: Result[dict[tuple[int, int], dict[UserIDType, float]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[tuple[int, int], dict[UserIDType, float]]], client: Client, max_results: int
+    ) -> None:
         exclusion_list: set[UserIDType] = set()
 
         role_id, server_id = Role.rpcore.value
@@ -769,7 +760,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
             team_members = {member.id for member in await core_team_role.fetch_members()}
             exclusion_list.update(team_members)
         else:
-            log.warning(f'Could not fetch Rocket Pool team members (role id {role_id})')
+            log.warning(f"Could not fetch Rocket Pool team members (role id {role_id})")
 
         def user_eligible(_user) -> bool:
             if _user is None:
@@ -785,7 +776,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
                 time_by_user[user_id][month] = time
 
         months: list[tuple[int, int]] = list(result.data.keys())
-        headers = ['user', 'total'] + [f'{m:02}/{y}' for (m, y) in months]
+        headers = ["user", "total"] + [f"{m:02}/{y}" for (m, y) in months]
         contributors: list[tuple[str, list[float]]] = []
 
         for user_id, monthly_data in time_by_user.items():
@@ -799,8 +790,8 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
                 continue
 
             username = await client.try_fetch_username(user or user_id)
-            if (total_time < 300 * len(months)) and any((t < self.min_monthly_activity for t in monthly_times)):
-                username = '* ' + username
+            if (total_time < 300 * len(months)) and any(t < self.min_monthly_activity for t in monthly_times):
+                username = "* " + username
 
             row = (username, [total_time] + monthly_times)
             contributors.append(row)
@@ -808,7 +799,7 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
         def fmt_h_m(_time: float) -> str:
             time_mins = round(_time)
             hours, minutes = time_mins // 60, time_mins % 60
-            return f'{hours}h {minutes:02}m'
+            return f"{hours}h {minutes:02}m"
 
         table = []
         for row in heapq.nlargest(max_results, contributors, key=lambda a: a[1]):
@@ -816,13 +807,13 @@ class SupportBountyAnalysis(MessageAnalysis[dict[tuple[int, int], dict[UserIDTyp
             table.append([name] + [fmt_h_m(t) for t in times])
 
         if table:
-            print(tabulate(table, headers=headers, colalign=('left',), stralign='right'))
+            print(tabulate(table, headers=headers, colalign=("left",), stralign="right"))
         else:
             print("No users are eligible for the bounty.")
 
     @staticmethod
     def subcommand() -> str:
-        return 'support-bounty'
+        return "support-bounty"
 
 
 class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
@@ -833,7 +824,7 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return MessageAnalysis.custom_args() | {
-            CustomPositionalArgument('user', UserIDType),
+            CustomPositionalArgument("user", UserIDType),
         }
 
     @property
@@ -855,11 +846,11 @@ class ThreadListAnalysis(MessageAnalysis[set[ChannelIDType]]):
         for channel_id in result.data:
             channel = await client.try_fetch_channel(channel_id)
             if isinstance(channel, discord.Thread):
-                print(f'https://discord.com/channels/{server_id}/{channel_id}')
+                print(f"https://discord.com/channels/{server_id}/{channel_id}")
 
     @staticmethod
     def subcommand() -> str:
-        return 'thread-list'
+        return "thread-list"
 
 
 class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
@@ -871,7 +862,7 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return TopContributorAnalysis.custom_args() | {
-            CustomOption('time-threshold', int, 50_000),
+            CustomOption("time-threshold", int, 50_000),
         }
 
     @property
@@ -905,25 +896,26 @@ class TimeToThresholdAnalysis(MessageAnalysis[dict[UserIDType, list[float]]]):
         self.__analysis._finalize()
         return self.y
 
-    async def _display_result(self, result: Result[dict[UserIDType, list[float]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[UserIDType, list[float]]], client: Client, max_results: int
+    ) -> None:
         y = {u: d for (u, d) in result.data.items() if d[-1] >= self.threshold}
 
         for user_id, data in sorted(y.items(), key=lambda a: len(a[1]))[:max_results]:
             username = await client.try_fetch_username(user_id)
             plt.plot(np.arange(len(data)), np.array(data), label=sanitize_str(username))
 
-        plt.xticks(rotation=30, ha='right')
-        plt.xlabel('days')
-        plt.ylabel('time (mins)')
+        plt.xticks(rotation=30, ha="right")
+        plt.xlabel("days")
+        plt.ylabel("time (mins)")
         plt.legend()
-        title = f'Fastest {self.stream} contributors to reach {self.threshold:,} minutes'
+        title = f"Fastest {self.stream} contributors to reach {self.threshold:,} minutes"
         plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'days-to-threshold'
+        return "days-to-threshold"
 
 
 class DailyMessageHistoryAnalysis(MessageAnalysis[dict[date, int]]):
@@ -947,20 +939,19 @@ class DailyMessageHistoryAnalysis(MessageAnalysis[dict[date, int]]):
     def _finalize(self) -> dict[date, int]:
         return self.tally
 
-    async def _display_result(self, result: Result[dict[date, int]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(self, result: Result[dict[date, int]], client: Client, max_results: int) -> None:
         x = list(result.data.keys())
         y = list(result.data.values())
         plt.plot(np.array(x), np.array(y))
         plt.ylim(bottom=0)
-        plt.ylabel('message count')
-        title = f'Daily {self.stream} message count'
+        plt.ylabel("message count")
+        title = f"Daily {self.stream} message count"
         plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'daily-messages'
+        return "daily-messages"
 
 
 class MessageStreakAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
@@ -1000,24 +991,27 @@ class MessageStreakAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
                 combined_dict[user] = 0, self.max_streak[user]
         return combined_dict
 
-    async def _display_result(self, result: Result[dict[UserIDType, tuple[int, int]]], client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[UserIDType, tuple[int, int]]], client: Client, max_results: int
+    ) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_streaks_cur = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1][0])
         top_streaks_max = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1][1])
 
-        print(f'Longest active {self.stream} message streaks {range_str}')
+        print(f"Longest active {self.stream} message streaks {range_str}")
         for i, (user_id, (streak, _)) in enumerate(top_streaks_cur):
-          print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {streak}')
+            print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {streak}")
 
-        print('')
+        print("")
 
-        print(f'Longest {self.stream} message streaks {range_str}')
+        print(f"Longest {self.stream} message streaks {range_str}")
         for i, (user_id, (_, streak)) in enumerate(top_streaks_max):
-          print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {streak}')
+            print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {streak}")
 
     @staticmethod
     def subcommand() -> str:
-        return 'message-streaks'
+        return "message-streaks"
+
 
 class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
     @property
@@ -1037,19 +1031,19 @@ class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
         self.days[msg_author].add(msg_date)
 
     def _finalize(self) -> dict[UserIDType, int]:
-        return {u: len(d) for u,d in self.days.items()}
+        return {u: len(d) for u, d in self.days.items()}
 
     async def _display_result(self, result: Result[dict[UserIDType, int]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         top_streaks_cur = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print(f'Most active days in {self.stream} {range_str}')
+        print(f"Most active days in {self.stream} {range_str}")
         for i, (user_id, active_days) in enumerate(top_streaks_cur):
-            print(f'{i + 1}. {await client.try_fetch_username(user_id)}: {active_days}')
+            print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {active_days}")
 
     @staticmethod
     def subcommand() -> str:
-        return 'active-days'
+        return "active-days"
 
 
 class DailyUniqueUserHistoryAnalysis(MessageAnalysis[dict[date, int]]):
@@ -1075,24 +1069,26 @@ class DailyUniqueUserHistoryAnalysis(MessageAnalysis[dict[date, int]]):
     def _finalize(self) -> dict[date, set[UserIDType]]:
         return self.tally
 
-    async def _display_result(self, result: Result[dict[date, set[UserIDType]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[date, set[UserIDType]]], client: Client, max_results: int
+    ) -> None:
         x = list(result.data.keys())
         y = [len(users) for users in result.data.values()]
         plt.plot(np.array(x), np.array(y))
         plt.ylim(bottom=0)
-        plt.ylabel('user count')
-        title = f'Daily unique user count for {self.stream}'
+        plt.ylabel("user count")
+        title = f"Daily unique user count for {self.stream}"
         plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'daily-unique-users'
+        return "daily-unique-users"
 
 
 class UniqueUserHistoryAnalysis(
-    HistoryBasedMessageAnalysis['UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis', int]):
+    HistoryBasedMessageAnalysis["UniqueUserHistoryAnalysis.__UniqueUserCountAnalysis", int]
+):
     class __UniqueUserCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
@@ -1109,12 +1105,12 @@ class UniqueUserHistoryAnalysis(
 
         async def _display_result(self, result: Result[tuple[int, int]], client: Client, max_results: int) -> None:
             start, end = result.start, result.end
-            print(f'Unique user count for {self.stream} {self._get_date_range_str(start, end)}')
+            print(f"Unique user count for {self.stream} {self._get_date_range_str(start, end)}")
             print(result.data)
 
         @staticmethod
         def subcommand() -> str:
-            return ''
+            return ""
 
     @classmethod
     def _base_analysis_class(cls) -> type[__UniqueUserCountAnalysis]:
@@ -1123,22 +1119,24 @@ class UniqueUserHistoryAnalysis(
     def _get_data(self) -> int:
         return len(self._base_analysis.users)
 
-    async def _display_result(self, result: Result[tuple[list[datetime], list[int]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[tuple[list[datetime], list[int]]], client: Client, max_results: int
+    ) -> None:
         x, y = result.data
         plt.plot(np.array(x), np.array(y))
-        plt.xticks(rotation=30, ha='right')
-        title = f'Number of unique {self.stream} participants over time'
+        plt.xticks(rotation=30, ha="right")
+        title = f"Number of unique {self.stream} participants over time"
         plt.title(sanitize_str(title))
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'unique-user-history'
+        return "unique-user-history"
 
 
 class WickPenaltyHistoryAnalysis(
-    HistoryBasedMessageAnalysis['WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis', tuple[int, int]]):
+    HistoryBasedMessageAnalysis["WickPenaltyHistoryAnalysis.__WickPenaltyCountAnalysis", tuple[int, int]]
+):
     class __WickPenaltyCountAnalysis(MessageAnalysis):
         @property
         def _require_reactions(self) -> bool:
@@ -1155,10 +1153,10 @@ class WickPenaltyHistoryAnalysis(
             if not message.embeds:
                 return
 
-            description = message.embeds[0].get('description', '')
-            if 'banned' in description:
+            description = message.embeds[0].get("description", "")
+            if "banned" in description:
                 self.bans += 1
-            elif any((kw in description for kw in ('timed out', 'silenced'))):
+            elif any(kw in description for kw in ("timed out", "silenced")):
                 self.timeouts += 1
 
         def _finalize(self) -> tuple[int, int]:
@@ -1168,13 +1166,13 @@ class WickPenaltyHistoryAnalysis(
             start, end = result.start, result.end
             bans, timeouts = result.data
 
-            print(f'Wick penalty count for {self.stream} {self._get_date_range_str(start, end)}')
-            print(f'Total bans: {bans}')
-            print(f'Total timeouts: {timeouts}')
+            print(f"Wick penalty count for {self.stream} {self._get_date_range_str(start, end)}")
+            print(f"Total bans: {bans}")
+            print(f"Total timeouts: {timeouts}")
 
         @staticmethod
         def subcommand() -> str:
-            return ''
+            return ""
 
     @classmethod
     def _base_analysis_class(cls) -> type[__WickPenaltyCountAnalysis]:
@@ -1183,22 +1181,23 @@ class WickPenaltyHistoryAnalysis(
     def _get_data(self) -> tuple[int, int]:
         return self._base_analysis.bans, self._base_analysis.timeouts
 
-    async def _display_result(self, result: Result[tuple[list[datetime], list[tuple[int, int]]]],
-                              client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[tuple[list[datetime], list[tuple[int, int]]]], client: Client, max_results: int
+    ) -> None:
         x, y = result.data
         x_arr, y_arr = np.array(x), np.array(y)
 
-        plt.plot(x_arr, y_arr[:, 0], label='Ban', color='firebrick')
-        plt.plot(x_arr, y_arr[:, 1], label='Timeout', color='orange')
-        plt.xticks(rotation=30, ha='right')
-        title = f'Cumulative Wick Penalty Count ({self.stream})'
+        plt.plot(x_arr, y_arr[:, 0], label="Ban", color="firebrick")
+        plt.plot(x_arr, y_arr[:, 1], label="Timeout", color="orange")
+        plt.xticks(rotation=30, ha="right")
+        title = f"Cumulative Wick Penalty Count ({self.stream})"
         plt.title(sanitize_str(title))
         plt.legend()
         plt.show()
 
     @staticmethod
     def subcommand() -> str:
-        return 'wick-penalties'
+        return "wick-penalties"
 
 
 class IMCContributionAnalysis(MessageAnalysis):
@@ -1240,11 +1239,13 @@ class IMCContributionAnalysis(MessageAnalysis):
         count_data = self.__count._finalize()
         return {uid: (time_data[uid], count_data[uid]) for uid in time_data.keys()}
 
-    async def _display_result(self, result: Result[dict[UserIDType, tuple[float, int]]], client: Client,
-                              max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[UserIDType, tuple[float, int]]], client: Client, max_results: int
+    ) -> None:
         data = result.data
         top_contributors: set[UserIDType] = set(
-            heapq.nlargest(max_results, result.data.keys(), key=lambda a: data[a][0]))
+            heapq.nlargest(max_results, result.data.keys(), key=lambda a: data[a][0])
+        )
         contributors: list[UserIDType] = list(self.imc_members.union(top_contributors))
         contributors.sort(key=lambda a: data.get(a, (0.0, 0))[0], reverse=True)
 
@@ -1256,15 +1257,15 @@ class IMCContributionAnalysis(MessageAnalysis):
             table.append((username, round(contrib_time), msg_count))
 
         start, end = result.start, result.end
-        print(f'IMC contributions for {self.stream} {self._get_date_range_str(start, end)}')
-        print(tabulate(table, headers=('user', 'time (mins)', 'msg count')))
+        print(f"IMC contributions for {self.stream} {self._get_date_range_str(start, end)}")
+        print(tabulate(table, headers=("user", "time (mins)", "msg count")))
 
     @staticmethod
     def subcommand() -> str:
-        return 'imc-contributions'
+        return "imc-contributions"
 
 
-class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
+class JSONDump(MessageAnalysis[list["JSONDump.JSONMessageType"]]):
     JSONFieldType = Optional[Union[int, str, list]]
     JSONMessageType = dict[str, JSONFieldType]
 
@@ -1273,17 +1274,17 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
         self.file_path = args.file_path
         if not self.file_path:
             self.file_path = sanitize_str(str(stream).strip()).lower()
-            self.file_path = self.file_path.replace(' ', '-')
-            self.file_path += '.json'
+            self.file_path = self.file_path.replace(" ", "-")
+            self.file_path += ".json"
         self.include_reactions = args.include_reactions
         self.include_usernames = args.include_usernames
 
     @classmethod
     def custom_args(cls) -> set[CustomArgument]:
         return TopContributorAnalysis.custom_args() | {
-            CustomOption('file-path', str, None),
-            CustomFlag('include-reactions'),
-            CustomFlag('include-usernames'),
+            CustomOption("file-path", str, None),
+            CustomFlag("include-reactions"),
+            CustomFlag("include-usernames"),
         }
 
     @property
@@ -1292,12 +1293,12 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
 
     def _prepare(self) -> None:
         self.data: list[JSONDump.JSONMessageType] = []
-        
+
     @staticmethod
     def _sanitize(data: Any) -> Any:
         if data is None:
             return None
-        
+
         if isinstance(data, (list, set)):
             return [JSONDump._sanitize(v) for v in data]
         elif isinstance(data, dict):
@@ -1316,11 +1317,11 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
 
     async def _display_result(self, result: Result[list[JSONMessageType]], client: Client, _: int) -> None:
         async def fetch_all_usernames() -> None:
-            log.info('Fetching usernames')
+            log.info("Fetching usernames")
             usernames: dict[UserIDType, Optional[str]] = {}
 
             for msg in result.data:
-                user_id = cast(int, msg['author_id'])
+                user_id = cast(int, msg["author_id"])
                 username: Optional[str] = None
 
                 if user_id in usernames:
@@ -1330,53 +1331,53 @@ class JSONDump(MessageAnalysis[list['JSONDump.JSONMessageType']]):
                         username = user.display_name
                     usernames[user_id] = username
 
-                msg['author_username'] = username
+                msg["author_username"] = username
 
         if self.include_usernames:
             await fetch_all_usernames()
 
-        log.info(f'Saving {self.file_path}')
-        with open(self.file_path, 'w') as f:
+        log.info(f"Saving {self.file_path}")
+        with open(self.file_path, "w") as f:
             json.dump(result.data, f, indent=4)
 
     @staticmethod
     def subcommand() -> str:
-        return 'json-dump'
+        return "json-dump"
 
 
 class RocketFuelRaffle(CountBasedMessageAnalysis):
     WAQ = 764676584832761878
-    WAQ_EMOTE = '<:waq:1022673797943406603>'
-    
+    WAQ_EMOTE = "<:waq:1022673797943406603>"
+
     def _on_message(self, message: Message) -> None:
         author = message.author_id
         is_waq = (author == self.WAQ) and (message.reference is None)
-        is_waqqed = (self.WAQ in message.reactions.get(self.WAQ_EMOTE, {}))
+        is_waqqed = self.WAQ in message.reactions.get(self.WAQ_EMOTE, {})
         if is_waq or is_waqqed:
             self.count[author] = self.count.get(author, 0) + 1
-    
+
     @property
     def _require_reactions(self) -> bool:
         return True
 
     def _title(self) -> str:
-        return 'Rocket Fuel Raffle Tickets'
-    
+        return "Rocket Fuel Raffle Tickets"
+
     async def _display_result(self, result: Result[dict[UserIDType, int]], client: Client, max_results: int) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
-        
+
         data: list[tuple[str, int]] = []
         for user_id, ticket_count in heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1]):
             username = await client.try_fetch_username(user_id)
-            data.append((f'{username}', ticket_count))
+            data.append((f"{username}", ticket_count))
 
-        print(f'{self._title()} {range_str}')
+        print(f"{self._title()} {range_str}")
         for username, ticket_count in data:
-            print(f'{username}\t{ticket_count}')
+            print(f"{username}\t{ticket_count}")
 
     @staticmethod
     def subcommand() -> str:
-        return 'rf-raffle'
+        return "rf-raffle"
 
 
 class LongevityAnalysis(MessageAnalysis[dict[UserIDType, timedelta]]):
@@ -1404,14 +1405,16 @@ class LongevityAnalysis(MessageAnalysis[dict[UserIDType, timedelta]]):
             active_time[author] = self.last_seen[author] - self.first_seen[author]
         return active_time
 
-    async def _display_result(self, result: Result[dict[UserIDType, timedelta]], client: Client, max_results: int) -> None:
+    async def _display_result(
+        self, result: Result[dict[UserIDType, timedelta]], client: Client, max_results: int
+    ) -> None:
         range_str = self._get_date_range_str(result.start, result.end)
         longest_active = heapq.nlargest(max_results, result.data.items(), key=lambda a: a[1])
 
-        print(f'Longest active contributors in {self.stream} {range_str}')
+        print(f"Longest active contributors in {self.stream} {range_str}")
         for i, (author_id, time) in enumerate(longest_active):
-            print(f'{i + 1}. {await client.try_fetch_username(author_id)}: {time.days} days')
+            print(f"{i + 1}. {await client.try_fetch_username(author_id)}: {time.days} days")
 
     @staticmethod
     def subcommand() -> str:
-        return 'longevity'
+        return "longevity"
