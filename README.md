@@ -53,8 +53,10 @@ Install the package in editable mode along with the development tools:
 ```bash
 pip install -e '.[dev]'
 ```
-Code is linted and formatted with [Ruff](https://docs.astral.sh/ruff/), configured in [pyproject.toml](pyproject.toml):
+RocketScrape requires Python 3.12 or newer. Code is linted and formatted with [Ruff](https://docs.astral.sh/ruff/)
+and type-checked with [Pyrefly](https://pyrefly.org/), both configured in [pyproject.toml](pyproject.toml):
 ```bash
 ruff check
 ruff format
+pyrefly check
 ```

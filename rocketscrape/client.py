@@ -2,14 +2,14 @@ import asyncio
 import logging
 import signal
 from asyncio.exceptions import CancelledError
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from threading import Lock
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import discord
 
-DiscordChannel = Union[discord.abc.GuildChannel, discord.abc.PrivateChannel, discord.Thread]
-DiscordUser = Union[discord.User, discord.ClientUser]
+type DiscordChannel = discord.abc.GuildChannel | discord.abc.PrivateChannel | discord.Thread
+type DiscordUser = discord.User | discord.ClientUser
 
 log = logging.getLogger(__name__)
 
@@ -58,37 +58,37 @@ class Client(discord.Client):
                 pass
             self.__lock.release()
 
-    async def try_fetch_user(self, user_id: int) -> Optional[DiscordUser]:
+    async def try_fetch_user(self, user_id: int) -> DiscordUser | None:
         try:
             return super().get_user(user_id) or (await super().fetch_user(user_id))
         except (discord.errors.NotFound, discord.errors.Forbidden):
             return None
 
-    async def try_fetch_role(self, role_id: int, guild_id: int) -> Optional[discord.Role]:
+    async def try_fetch_role(self, role_id: int, guild_id: int) -> discord.Role | None:
         if not (guild := await self.try_fetch_guild(guild_id)):
             return None
         return guild.get_role(role_id)
 
-    async def try_fetch_guild(self, guild_id: int) -> Optional[discord.Guild]:
+    async def try_fetch_guild(self, guild_id: int) -> discord.Guild | None:
         try:
             return super().get_guild(guild_id) or (await super().fetch_guild(guild_id))
         except (discord.errors.NotFound, discord.errors.Forbidden):
             return None
 
-    async def try_fetch_channel(self, channel_id: int) -> Optional[DiscordChannel]:
+    async def try_fetch_channel(self, channel_id: int) -> DiscordChannel | None:
         try:
             return super().get_channel(channel_id) or (await super().fetch_channel(channel_id))
         except (discord.errors.NotFound, discord.errors.Forbidden):
             return None
 
-    async def try_fetch_username(self, user: Union[int, DiscordUser]) -> str:
+    async def try_fetch_username(self, user: int | DiscordUser) -> str:
         if isinstance(user, int):
             return self.__get_username(user, await self.try_fetch_user(user))
         else:
             return self.__get_username(user.id, user)
 
     @staticmethod
-    def __get_username(user_id: int, user: Optional[DiscordUser]):
+    def __get_username(user_id: int, user: DiscordUser | None):
         if user is None:
             return f"<{user_id}>"
         return user.display_name

@@ -9,7 +9,7 @@ description = "Discord message stream processing framework"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "haloooloolo" }]
-requires-python = ">=3.9, <4"
+requires-python = ">=3.12"
 dependencies = [
     "discord.py-self @ git+https://github.com/haloooloolo/discord.py-self.git",
     "duckdb",
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff"]
+dev = ["pyrefly", "ruff", "types-tabulate", "types-tqdm"]
 
 [project.scripts]
 rocketscrape = "rocketscrape.__main__:main"
@@ -29,7 +29,7 @@ rocketscrape = "rocketscrape.__main__:main"
 packages = ["rocketscrape"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py312"
 line-length = 120
 
 [tool.ruff.lint]
@@ -41,3 +41,7 @@ select = [
     "B",  # flake8-bugbear
     "UP", # pyupgrade
 ]
+
+[tool.pyrefly]
+project-includes = ["rocketscrape"]
+python-version = "3.12"

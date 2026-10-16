@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Generic, Optional, TypeVar, Union, cast
+from typing import Any, cast
 
 import discord
 import matplotlib.pyplot as plt
@@ -19,8 +19,6 @@ from rocketscrape.utils import Role, Server, sanitize_str
 
 log = logging.getLogger(__name__)
 
-T = TypeVar("T")
-
 
 @dataclass(frozen=True)
 class CustomArgument(ABC):
@@ -32,37 +30,37 @@ class CustomArgument(ABC):
 
 
 class CustomPositionalArgument(CustomArgument):
-    def __init__(self, _name: str, _type: type[Any], _help: Optional[str] = None):
+    def __init__(self, _name: str, _type: type[Any], _help: str | None = None):
         args = (_name,)
         kwargs = dict(type=_type, help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomFlag(CustomArgument):
-    def __init__(self, _name: str, _help: Optional[str] = None):
+    def __init__(self, _name: str, _help: str | None = None):
         args = (f"--{_name}",)
         kwargs = dict(action="store_true", help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomOption(CustomArgument):
-    def __init__(self, _name: str, _type: type[Any], _default: Any, _help: Optional[str] = None):
+    def __init__(self, _name: str, _type: type[Any], _default: Any, _help: str | None = None):
         args = (f"--{_name}",)
         kwargs = dict(type=_type, default=_default, help=_help)
         super().__init__(args, kwargs)
 
 
 class CustomList(CustomArgument):
-    def __init__(self, _name: str, _type: type[Any], _help: Optional[str] = None):
+    def __init__(self, _name: str, _type: type[Any], _help: str | None = None):
         args = (f"--{_name}",)
         kwargs = dict(nargs="+", type=_type, help=_help)
         super().__init__(args, kwargs)
 
 
 @dataclass(frozen=True)
-class Result(Generic[T]):
-    start: Optional[datetime]
-    end: Optional[datetime]
+class Result[T]:
+    start: datetime | None
+    end: datetime | None
     data: T
     __display: Callable[["Result[T]", Client, int], Awaitable[None]]
 
@@ -70,14 +68,14 @@ class Result(Generic[T]):
         await self.__display(self, client, max_results)
 
 
-class MessageAnalysis(ABC, Generic[T]):
+class MessageAnalysis[T](ABC):
     def __init__(self, stream: MessageStream, args):
         self.stream = stream
         self.log_interval = timedelta(seconds=args.log_interval)
         self.user_filter = set(args.user_filter) if args.user_filter else None
         self.skip_fetch = args.no_fetch
 
-    async def run(self, start: Optional[datetime], end: Optional[datetime]) -> Result[T]:
+    async def run(self, start: datetime | None, end: datetime | None) -> Result[T]:
         assert (start is None) or (end is None) or (end > start)
         last_ts = datetime.now()
         self._prepare()
@@ -113,7 +111,7 @@ class MessageAnalysis(ABC, Generic[T]):
         pass
 
     @staticmethod
-    def _get_date_range_str(start: Optional[datetime], end: Optional[datetime]) -> str:
+    def _get_date_range_str(start: datetime | None, end: datetime | None) -> str:
         if start and end:
             range_str = f"from {start} to {end}"
         elif start:
@@ -163,10 +161,7 @@ class CountBasedMessageAnalysis(MessageAnalysis[dict[UserIDType, int]]):
             print(f"{i + 1}. {await client.try_fetch_username(user_id)}: {count}")
 
 
-S = TypeVar("S", bound=MessageAnalysis)
-
-
-class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]], Generic[S, T]):
+class HistoryBasedMessageAnalysis[S: MessageAnalysis, T](MessageAnalysis[tuple[list[datetime], list[T]]]):
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
         self._base_analysis = self._base_analysis_class()(stream, args)
@@ -187,8 +182,8 @@ class HistoryBasedMessageAnalysis(MessageAnalysis[tuple[list[datetime], list[T]]
 
     def _prepare(self) -> None:
         self._base_analysis._prepare()
-        self.next_date: Optional[datetime] = None
-        self.last_ts: Optional[datetime] = None
+        self.next_date: datetime | None = None
+        self.last_ts: datetime | None = None
         self.x: list[datetime] = []
         self.y: list[T] = []
 
@@ -391,7 +386,7 @@ class MissingPersonAnalysis(TopContributorAnalysis):
     def _prepare(self) -> None:
         super()._prepare()
         self.last_seen: dict[UserIDType, datetime] = {}
-        self.last_ts: Optional[datetime] = None
+        self.last_ts: datetime | None = None
 
     def _on_message(self, message: Message) -> None:
         super()._on_message(message)
@@ -1013,7 +1008,7 @@ class MessageStreakAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
         return "message-streaks"
 
 
-class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
+class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, int]]):
     @property
     def _require_reactions(self) -> bool:
         return False
@@ -1046,7 +1041,7 @@ class ActiveDaysAnalyis(MessageAnalysis[dict[UserIDType, tuple[int, int]]]):
         return "active-days"
 
 
-class DailyUniqueUserHistoryAnalysis(MessageAnalysis[dict[date, int]]):
+class DailyUniqueUserHistoryAnalysis(MessageAnalysis[dict[date, set[UserIDType]]]):
     @property
     def _require_reactions(self) -> bool:
         return False
@@ -1266,8 +1261,8 @@ class IMCContributionAnalysis(MessageAnalysis):
 
 
 class JSONDump(MessageAnalysis[list["JSONDump.JSONMessageType"]]):
-    JSONFieldType = Optional[Union[int, str, list]]
-    JSONMessageType = dict[str, JSONFieldType]
+    type JSONFieldType = int | str | list | None
+    type JSONMessageType = dict[str, JSONFieldType]
 
     def __init__(self, stream: MessageStream, args):
         super().__init__(stream, args)
@@ -1315,14 +1310,14 @@ class JSONDump(MessageAnalysis[list["JSONDump.JSONMessageType"]]):
     def _finalize(self) -> list[JSONMessageType]:
         return self.data
 
-    async def _display_result(self, result: Result[list[JSONMessageType]], client: Client, _: int) -> None:
+    async def _display_result(self, result: Result[list[JSONMessageType]], client: Client, max_results: int) -> None:
         async def fetch_all_usernames() -> None:
             log.info("Fetching usernames")
-            usernames: dict[UserIDType, Optional[str]] = {}
+            usernames: dict[UserIDType, str | None] = {}
 
             for msg in result.data:
                 user_id = cast(int, msg["author_id"])
-                username: Optional[str] = None
+                username: str | None = None
 
                 if user_id in usernames:
                     username = usernames[user_id]

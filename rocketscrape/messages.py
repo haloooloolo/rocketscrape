@@ -5,8 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Union
+from datetime import UTC, datetime, timedelta
 
 import discord
 import tqdm
@@ -14,7 +13,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 from rocketscrape.cache import _Cache, _Database
 
-ChannelType = Union[discord.TextChannel, discord.Thread, discord.GroupChannel, discord.DMChannel]
+type ChannelType = discord.TextChannel | discord.Thread | discord.GroupChannel | discord.DMChannel
 UserIDType = int
 MessageIDType = int
 ChannelIDType = int
@@ -59,13 +58,13 @@ class Message:
         self.channel_id: ChannelIDType = d_msg.channel.id
         self.author_id: UserIDType = d_msg.author.id
         self.created: datetime = d_msg.created_at
-        self.last_edited: Optional[datetime] = d_msg.edited_at
-        self.updated: datetime = datetime.now(timezone.utc)
+        self.last_edited: datetime | None = d_msg.edited_at
+        self.updated: datetime = datetime.now(UTC)
         self.content: str = d_msg.content
-        self.reference: Optional[MessageIDType] = d_msg.reference.message_id if d_msg.reference else None
+        self.reference: MessageIDType | None = d_msg.reference.message_id if d_msg.reference else None
         self.attachments: list[str] = [a.url for a in d_msg.attachments]
         self.embeds: list[dict] = [dict(embed.to_dict()) for embed in d_msg.embeds]
-        self._reactions: Optional[dict[str, set[UserIDType]]] = None
+        self._reactions: dict[str, set[UserIDType]] | None = None
 
     @property
     def reactions(self) -> dict[str, set[UserIDType]]:
@@ -122,19 +121,19 @@ class Message:
 
 class MessageStream(ABC):
     @abstractmethod
-    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Message | None:
         pass
 
     @abstractmethod
     def get_history(
-        self, start: Optional[datetime], end: Optional[datetime], include_reactions=True, skip_fetch=False
+        self, start: datetime | None, end: datetime | None, include_reactions=True, skip_fetch=False
     ) -> AsyncIterator[Message]:
         pass
 
 
 # Discord rejects snowflakes < 0, so the floor for any `after` we hand to
 # channel.history must be at least the Discord epoch (2015-01-01).
-_EPOCH = datetime.fromtimestamp(discord.utils.DISCORD_EPOCH / 1000, timezone.utc)
+_EPOCH = datetime.fromtimestamp(discord.utils.DISCORD_EPOCH / 1000, UTC)
 
 
 class _FetchExhausted(Exception):
@@ -152,7 +151,7 @@ class _FetchRange:
     beginning". `before` is `None` for "to the channel tip"."""
 
     after: datetime
-    before: Optional[datetime]
+    before: datetime | None
 
 
 @dataclass(frozen=True)
@@ -165,7 +164,7 @@ class _FetchPlan:
 
 def _merge_ranges(ranges: list[_FetchRange]) -> list[_FetchRange]:
     """Merge overlapping or adjacent ranges, treating `before=None` as +∞."""
-    POS_INF = datetime.max.replace(tzinfo=timezone.utc)
+    POS_INF = datetime.max.replace(tzinfo=UTC)
 
     norm = sorted(
         ((r.after, r.before or POS_INF) for r in ranges),
@@ -189,15 +188,13 @@ class ChannelMessageStream(MessageStream):
         self.refresh_window = timedelta(hours=refresh_window)
         self._cache = _Cache(database, channel, commit_batch_size)
 
-    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Message | None:
         return self._cache[message_id]
 
-    def needs_fetch(self, start: Optional[datetime], end: Optional[datetime], include_reactions: bool) -> bool:
+    def needs_fetch(self, start: datetime | None, end: datetime | None, include_reactions: bool) -> bool:
         return self._fetch_plan(start, end, include_reactions) is not None
 
-    def _fetch_plan(
-        self, start: Optional[datetime], end: Optional[datetime], include_reactions: bool
-    ) -> Optional[_FetchPlan]:
+    def _fetch_plan(self, start: datetime | None, end: datetime | None, include_reactions: bool) -> _FetchPlan | None:
         """Returns the pagination plan covering every uncovered or
         needs-refresh sub-range of [start, end], or None if no work is needed."""
         segments = self._cache.segments_in_range(start, end)
@@ -236,7 +233,7 @@ class ChannelMessageStream(MessageStream):
             return None
         return _FetchPlan(ranges=_merge_ranges(raw))
 
-    def _tail_might_have_new_messages(self, cache_end: Optional[datetime], end: Optional[datetime]) -> bool:
+    def _tail_might_have_new_messages(self, cache_end: datetime | None, end: datetime | None) -> bool:
         """True if there could be messages between cache_end and end that we
         haven't cached. False when we can prove the channel has nothing
         newer than cache_end."""
@@ -252,7 +249,7 @@ class ChannelMessageStream(MessageStream):
             return False
         return True
 
-    async def populate(self, start: Optional[datetime], end: Optional[datetime], include_reactions: bool) -> None:
+    async def populate(self, start: datetime | None, end: datetime | None, include_reactions: bool) -> None:
         """Fetch any missing or stale messages in [start, end] into the cache.
 
         On Forbidden mid-fetch or cancellation, commits whatever we did manage
@@ -262,7 +259,7 @@ class ChannelMessageStream(MessageStream):
         if plan is None:
             return
 
-        last_seen: Optional[datetime] = None
+        last_seen: datetime | None = None
         completed = False
         try:
             for fetch_range in plan.ranges:
@@ -282,11 +279,11 @@ class ChannelMessageStream(MessageStream):
             # to the buffer (with possibly partial reaction state) get
             # persisted, breaking refresh-loop traps.
             if completed:
-                self._cache.commit(start, _now_or_min(end, datetime.now(timezone.utc)))
+                self._cache.commit(start, _now_or_min(end, datetime.now(UTC)))
             elif last_seen is not None:
                 self._cache.commit(start, last_seen)
 
-    async def _absorb(self, d_msg: discord.Message, start: Optional[datetime], include_reactions: bool) -> None:
+    async def _absorb(self, d_msg: discord.Message, start: datetime | None, include_reactions: bool) -> None:
         """Update or insert a fetched message in the cache.
 
         We add the target to the uncommitted buffer *before* fetching reactions
@@ -304,14 +301,12 @@ class ChannelMessageStream(MessageStream):
             await target._fetch_reactions(d_msg)
         self._cache.commit_maybe(start, target.created)
 
-    async def _iter_history(
-        self, after: Optional[datetime], before: Optional[datetime]
-    ) -> AsyncIterator[discord.Message]:
+    async def _iter_history(self, after: datetime | None, before: datetime | None) -> AsyncIterator[discord.Message]:
         """Paginate channel.history() through the global rate limiter so the
         IP-wide request rate stays under Discord's user-level cap. Retries
         transient failures and resumes from the last successful message;
         Forbidden propagates to the caller for explicit handling."""
-        cursor: Optional[datetime] = after
+        cursor: datetime | None = after
         for attempt in range(_FETCH_RETRIES):
             try:
                 await _HTTP_RATE.acquire()  # before the first page
@@ -337,7 +332,7 @@ class ChannelMessageStream(MessageStream):
         raise _FetchExhausted(f"{self}: giving up after repeated server errors")
 
     async def get_history(
-        self, start: Optional[datetime], end: Optional[datetime], include_reactions=True, skip_fetch=False
+        self, start: datetime | None, end: datetime | None, include_reactions=True, skip_fetch=False
     ) -> AsyncIterator[Message]:
         if not skip_fetch:
             await _fetch_all([self], start, end, include_reactions)
@@ -351,13 +346,13 @@ class ChannelMessageStream(MessageStream):
         return str(self.channel)
 
 
-def _now_or_min(a: Optional[datetime], b: datetime) -> datetime:
+def _now_or_min(a: datetime | None, b: datetime) -> datetime:
     """Return whichever of `a`/`b` is earlier, treating None as +infinity."""
     return a if (a is not None and a < b) else b
 
 
 async def _fetch_all(
-    streams: list[ChannelMessageStream], start: Optional[datetime], end: Optional[datetime], include_reactions: bool
+    streams: list[ChannelMessageStream], start: datetime | None, end: datetime | None, include_reactions: bool
 ) -> None:
     """Phase 1: populate the cache for any channels that need it, in parallel."""
     to_fetch = [s for s in streams if s.needs_fetch(start, end, include_reactions)]
@@ -398,7 +393,7 @@ async def _fetch_all(
 
 
 async def _read_all(
-    database: _Database, streams: list[ChannelMessageStream], start: Optional[datetime], end: Optional[datetime]
+    database: _Database, streams: list[ChannelMessageStream], start: datetime | None, end: datetime | None
 ) -> AsyncIterator[Message]:
     """Phase 2: yield all cached messages in [start, end] in chronological order."""
     channel_ids = [s.channel.id for s in streams]
@@ -431,7 +426,7 @@ class MultiChannelMessageStream(MessageStream):
             base_repr = "(" + ", ".join([str(s) for s in self.streams]) + ")"
         self.__repr = base_repr + ("+🧵" if include_threads else "")
 
-    def get_message(self, message_id: MessageIDType) -> Optional[Message]:
+    def get_message(self, message_id: MessageIDType) -> Message | None:
         for stream in self.streams:
             if message := stream.get_message(message_id):
                 return message
@@ -458,7 +453,7 @@ class MultiChannelMessageStream(MessageStream):
         return self._async_init().__await__()
 
     async def get_history(
-        self, start: Optional[datetime], end: Optional[datetime], include_reactions=True, skip_fetch=False
+        self, start: datetime | None, end: datetime | None, include_reactions=True, skip_fetch=False
     ) -> AsyncIterator[Message]:
         streams = list(self.streams)
         if not skip_fetch:

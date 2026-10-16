@@ -3,8 +3,8 @@ import asyncio
 import inspect
 import logging
 import os
-from datetime import datetime, timezone
-from typing import TypeVar, get_args
+from datetime import UTC, datetime
+from typing import get_args
 
 import discord
 import platformdirs
@@ -21,9 +21,6 @@ from rocketscrape.messages import (
 )
 from rocketscrape.utils import Channel, Server
 
-T = TypeVar("T")
-
-
 log = logging.getLogger(__name__)
 
 
@@ -36,9 +33,9 @@ def main():
 async def _main(client: Client) -> int:
     args = client.args
     if args.start and args.start.tzinfo is None:
-        args.start = args.start.replace(tzinfo=timezone.utc)
+        args.start = args.start.replace(tzinfo=UTC)
     if args.end and args.end.tzinfo is None:
-        args.end = args.end.replace(tzinfo=timezone.utc)
+        args.end = args.end.replace(tzinfo=UTC)
 
     database = _Database(args.cache_dir)
     common_stream_args = (database, args.refresh_window, args.commit_batch_size)
@@ -61,7 +58,7 @@ async def _main(client: Client) -> int:
             if not (channel := await client.try_fetch_channel(channel_id)):
                 log.error(f"Channel {channel_id} could not be found")
                 return 1
-            if not isinstance(channel, get_args(ChannelType)):
+            if not isinstance(channel, get_args(ChannelType.__value__)):
                 log.error(f"Channel {channel_id} has incompatible type {type(channel)}")
                 return 2
 
@@ -87,7 +84,7 @@ async def _main(client: Client) -> int:
     return 0
 
 
-def get_subclasses(cls: type[T]) -> set[type[T]]:
+def get_subclasses[T](cls: type[T]) -> set[type[T]]:
     classes = [cls]
     for subcls in cls.__subclasses__():
         classes.extend(get_subclasses(subcls))

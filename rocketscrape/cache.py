@@ -6,8 +6,8 @@ import json
 import logging
 import os
 from collections.abc import Iterable, Iterator
-from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, overload
 
 import duckdb
 
@@ -72,21 +72,29 @@ def _open_db(cache_dir: str) -> duckdb.DuckDBPyConnection:
     return conn
 
 
+@overload
+def _to_db_ts(dt: datetime) -> datetime: ...
+@overload
+def _to_db_ts(dt: None) -> None: ...
 def _to_db_ts(dt: datetime | None) -> datetime | None:
     """DuckDB TIMESTAMP is naive — strip tzinfo (datetimes are assumed UTC)."""
     return dt.replace(tzinfo=None) if dt is not None else None
 
 
+@overload
+def _from_db_ts(dt: datetime) -> datetime: ...
+@overload
+def _from_db_ts(dt: None) -> None: ...
 def _from_db_ts(dt: datetime | None) -> datetime | None:
     """Reattach UTC tzinfo when reading naive TIMESTAMP back."""
-    return dt.replace(tzinfo=timezone.utc) if dt is not None else None
+    return dt.replace(tzinfo=UTC) if dt is not None else None
 
 
 def _ts_range(start: datetime | None, end: datetime | None) -> tuple[datetime, datetime]:
     """Default an open-ended timestamp range to [epoch, now] in DuckDB-naive form."""
     return (
-        (start or datetime.fromtimestamp(0, timezone.utc)).replace(tzinfo=None),
-        (end or datetime.now(timezone.utc)).replace(tzinfo=None),
+        (start or datetime.fromtimestamp(0, UTC)).replace(tzinfo=None),
+        (end or datetime.now(UTC)).replace(tzinfo=None),
     )
 
 
@@ -150,10 +158,12 @@ class _Database:
             return 0
         placeholders = ",".join(["?"] * len(ids))
         db_start, db_end = _ts_range(start, end)
-        return self.conn.execute(
+        row = self.conn.execute(
             f"SELECT COUNT(*) FROM messages WHERE channel_id IN ({placeholders}) AND created_ts BETWEEN ? AND ?",
             [*ids, db_start, db_end],
-        ).fetchone()[0]
+        ).fetchone()
+        assert row is not None  # COUNT(*) always returns a row
+        return row[0]
 
     def iter_messages(
         self, channel_ids: Iterable[int], start: datetime | None, end: datetime | None
@@ -197,7 +207,7 @@ class _Cache:
             "AND NOT (end_ts < ? OR start_ts > ?) ORDER BY start_ts",
             [self.channel_id, db_start, db_end],
         ).fetchall()
-        return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc)) for s, e in rows]
+        return [(s.replace(tzinfo=UTC), e.replace(tzinfo=UTC)) for s, e in rows]
 
     def refresh_clusters(
         self,
@@ -253,7 +263,7 @@ class _Cache:
             """,
             [self.channel_id, db_start, db_end],
         ).fetchall()
-        return [(s.replace(tzinfo=timezone.utc), e.replace(tzinfo=timezone.utc)) for s, e in rows]
+        return [(s.replace(tzinfo=UTC), e.replace(tzinfo=UTC)) for s, e in rows]
 
     def __getitem__(self, message_id: MessageIDType) -> Message | None:
         if (msg := self.__uncommitted.get(message_id)) is not None:
@@ -265,10 +275,12 @@ class _Cache:
         return _row_to_message(row) if row else None
 
     def __len__(self) -> int:
-        return self.conn.execute(
+        row = self.conn.execute(
             "SELECT count(*) FROM messages WHERE channel_id = ?",
             [self.channel_id],
-        ).fetchone()[0]
+        ).fetchone()
+        assert row is not None  # COUNT(*) always returns a row
+        return row[0]
 
     def add(self, message: Message) -> None:
         self.__uncommitted[message.id] = message
@@ -284,7 +296,7 @@ class _Cache:
         if n:
             log.info(f'Saving {n} messages from "{self.__channel_repr}" to disk')
 
-        start = start or datetime.fromtimestamp(0, timezone.utc)
+        start = start or datetime.fromtimestamp(0, UTC)
         rows = [_message_to_row(m, self.channel_id) for m in self.__uncommitted.values()]
 
         self.conn.execute("BEGIN TRANSACTION")
